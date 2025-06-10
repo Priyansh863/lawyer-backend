@@ -11,7 +11,7 @@ import userRoute from "./routes/UserRoute";
 const app = express();
 const envConfig = config();
 
-app.use(cors());
+app.use(cors({ origin: "*" }));
 const port = envConfig.port;
 app.use(bodyParser.json({ limit: "5mb" }));
 app.use(express.json({ limit: "5mb" }));
