@@ -11,11 +11,17 @@ import userRoute from "./routes/UserRoute";
 const app = express();
 const envConfig = config();
 
+// app.use(cors({
+//   origin: "https://main.dmvg3pklpu0nm.amplifyapp.com",
+//   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+//   allowedHeaders: ["Content-Type", "Authorization"],
+//   credentials: false,
+// }));
 app.use(cors({
-  origin: "https://main.dmvg3pklpu0nm.amplifyapp.com",
+  origin: "*", // Allow all origins for development; restrict in production
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false,
+  credentials: true, // Set to true if you need to allow cookies or HTTP authentication
 }));
 const port = envConfig.port;
 app.use(express.json({ limit: "5mb" }));
