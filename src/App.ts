@@ -11,7 +11,12 @@ import userRoute from "./routes/UserRoute";
 const app = express();
 const envConfig = config();
 
-app.use(cors({ origin: "*" }));
+app.use(cors({
+  origin: "https://main.dmvg3pklpu0nm.amplifyapp.com",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false,
+}));
 const port = envConfig.port;
 app.use(bodyParser.json({ limit: "5mb" }));
 app.use(express.json({ limit: "5mb" }));
