@@ -10,11 +10,11 @@ import { ISecretManagerData } from "../Interfaces/commonInterfaces";
  */
 
 let secrectManagerKeys: ISecretManagerData;
-const SENDGRID_API_KEY = "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";
-const SENDGRID_SENDER = "noreply@lawgg.net";
+// const SENDGRID_API_KEY = "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";
+// const SENDGRID_SENDER = "noreply@lawgg.net";
 const fetchSecretKeys = async () => {
   secrectManagerKeys = await dbConfig.secretManagerConnection() as ISecretManagerData;
-  sgMail.setApiKey(SENDGRID_API_KEY);
+  sgMail.setApiKey(secrectManagerKeys.sendGridTestApiKey);
 };
 
 /*
@@ -26,7 +26,7 @@ export const sendMail = async (content: any, email: string) => {
     await fetchSecretKeys();
   }
   const mailData = {
-    from: SENDGRID_SENDER,
+    from: secrectManagerKeys.sendGridTestApiKey,
     to: email,
     subject: content.subject,
     text: content.text,
