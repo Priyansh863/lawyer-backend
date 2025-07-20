@@ -29,6 +29,8 @@ export interface IUserSchema {
   fcm_token?: string;
   rating_updated_for_self?: boolean;
   rating_updated_for_others?: boolean;
+  otp?: string;
+  otp_expires?: Date;
 }
 
 // Admin Schema interface

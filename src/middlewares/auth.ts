@@ -19,9 +19,11 @@ const Auth = async (request: Request, response: Response, next: NextFunction) =>
     }
 
     const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
-    const decoded = jwt.verify(token, dbData.jwtSecretKey) as { _id: string };
+    const decoded = jwt.verify(token, dbData.jwtSecretKey) as { _id: string, account_type:string};
+    console.log("Decoded token ", decoded);
     
     request["id"] = decoded._id;
+    request["role"] = decoded.account_type;
     request["token"] = token;
     next();
   } catch (error) {

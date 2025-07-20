@@ -11,7 +11,9 @@ import {
   forgotPassword,
   resetPassword,
   appleLogin,
-  socialLogin
+  socialLogin,
+  verifySignupOtp,
+  resendSignupOtp
 } from "../controllers/AuthController";
 
 import {
@@ -38,5 +40,9 @@ authRoutes.post("/social-login", HandleErrors(socialLogin));
 authRoutes.post("/otp-verification", HandleErrors(otpVerification));
 
 authRoutes.get("/match-token", Auth, HandleErrors(matchToken));
+
+authRoutes.post("/verify-otp", HandleErrors(verifySignupOtp));
+
+authRoutes.post("/resend-otp", HandleErrors(resendSignupOtp));
 
 export default authRoutes;

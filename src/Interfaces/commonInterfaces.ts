@@ -402,6 +402,8 @@ export interface INotificationMessage {
 export interface IEmailArguments {
   email: string;
   type: string;
+  otp?: string;
+  name?: string;
 }
 export interface IReportProblemEmailArguments {
   email: string;

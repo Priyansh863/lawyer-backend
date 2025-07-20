@@ -37,87 +37,332 @@ class AuthServices {
    */
   async login(data: LoginData) {
     const { email, password } = data;
-    const query = { email: email.toLowerCase(), is_active: 1 };
+    const query = { email: email.toLowerCase() };
+    console.log("Login data:>>>>>>>>>>>>>>>", data);
+    
+    // First check if user exists
     const userInfo = await User.findOne(query);
-    if (userInfo) {
-      if (!userInfo.is_active) {
-        this.response = {
-          success: false,
-          message: "user_not_active",
-        };
-      } else {
-        if (
-          await bcrypt.compare(password.trim(), userInfo.password as string)
-        ) {
-          const tokenPayload = {
-            _id: userInfo._id,
-            email: userInfo.email,
-            account_type: userInfo.account_type,
-          };
-          const tokenResult: string = await createToken(tokenPayload);
-          const userData = await User.findOne(query)
-            .select("-password")
-            console.log("userData", userData);
-
-          this.response = {
-            success: true,
-            message: "login_successful",
-            data: {userData, token: tokenResult},
-          };
-        } else {
-          this.response = {
-            success: false,
-            message: "credentials_not_match",
-          };
-        }
-      }
-    } else {
+    
+    if (!userInfo) {
       this.response = {
         success: false,
         message: "no_user_found",
       };
+      return this.response;
     }
+
+    // Check if user is active
+    if (!userInfo.is_active) {
+      this.response = {
+        success: false,
+        message: "user_not_active",
+      };
+      return this.response;
+    }
+
+    // Check if user is verified
+    if (!userInfo.is_verified) {
+      // Send OTP for verification
+      const otpResponse = await this.sendSignupOtp(email);
+      if (otpResponse && otpResponse.success && otpResponse.data) {
+        this.response = {
+          success: false,
+          message: "account_not_verified",
+          data: {
+            email: email,
+            otp_expires: (otpResponse.data as { otp_expires: Date }).otp_expires,
+            can_verify: true
+          }
+        };
+      } else {
+        this.response = {
+          success: false,
+          message: "failed_to_send_otp"
+        };
+      }
+      return this.response;
+    }
+
+    // Verify password
+    if (await bcrypt.compare(password.trim(), userInfo.password as string)) {
+      // Generate a JWT token
+      const dbData = await dbConfig.secretManagerConnection();
+      const token = jwt.sign(
+        { _id: userInfo._id, email: userInfo.email, account_type: userInfo.account_type },
+        dbData.jwtSecretKey as string,
+        { expiresIn: "1h" }
+      );
+      
+      const userData = await User.findOne(query).select("-password");
+      return { success: true, message: "login_successful", data: { userData, token } };
+    } else {
+      this.response = {
+        success: false,
+        message: "credentials_not_match",
+      };
+    }
+    
     return this.response;
   }
 
   /**
-   * Sign up
+   * Generate a random OTP
+   */
+  private generateOtp(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  /**
+   * Sign up with OTP
    */
   async signup(data: IUserSchema) {
     const { email, password, first_name, last_name, account_type } = data;
+
+    // Check if user already exists
     const checkUserInfo = await User.findOne({ email: email.toLowerCase() });
     if (checkUserInfo && checkUserInfo._id) {
+      // If user exists but is not verified, we can resend OTP
+      if (!checkUserInfo.is_verified) {
+        return this.sendSignupOtp(email);
+      }
+
       this.response = {
         success: false,
         message: "existing_user_signup_error",
       };
-    } else {
-        const encryptedPassword = await bcrypt.hash(password, 8);
-        const createQuery = {
-          email: email.toLowerCase(),
-          password: encryptedPassword,
-          first_name,
-          last_name,
-          account_type,
-          is_active: 1,
-          is_verified: 0,
-          is_profile_completed: 0,
-        };
-        const userData = await User.create(createQuery);
-        if (userData) {
-          this.response = {
-            success: true,
-            message: "signup_successful",
-            data: userData,
-          };
-        } else {
-          this.response = {
-            success: false,
-            message: "signup_failed",
-          };
-        }
-      
+      return this.response;
     }
+
+    // Generate OTP and set expiration (10 minutes from now)
+    const otp = this.generateOtp();
+    console.log("otp>>>>>>>>>>>>signup", otp);
+
+    const otpExpires = new Date();
+    otpExpires.setMinutes(otpExpires.getMinutes() + 10);
+
+    // Encrypt the OTP before storing
+    const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+    const encryptedOtp = enc.Base64.stringify(
+      HmacSHA256(otp, dbData.cryptoKey)
+    );
+
+    try {
+      // Create user with hashed password and OTP
+      const encryptedPassword = await bcrypt.hash(password, 8);
+      const userData = await User.create({
+        email: email.toLowerCase(),
+        password: encryptedPassword,
+        first_name,
+        last_name,
+        account_type,
+        is_active: 1,
+        is_verified: 0,
+        is_profile_completed: 0,
+        otp: encryptedOtp,
+        otp_expires: otpExpires,
+      });
+
+      if (userData) {
+        // Generate a token for the new user
+        const token = jwt.sign(
+          { _id: userData._id, email: userData.email },
+          process.env.JWT_SECRET as string,
+          { expiresIn: "1h" }
+        );
+
+        // Send OTP to user's email
+        // await sendOtpEmail({
+        //   email: email.toLowerCase(),
+        //   otp: otp,
+        //   type: "signup-otp",
+        //   name: first_name,
+        // });
+
+        this.response = {
+          success: true,
+          message: "otp_sent",
+          data: {
+            email: userData.email,
+            otp_expires: otpExpires,
+            token,
+          },
+        };
+      } else {
+        this.response = {
+          success: false,
+          message: "signup_failed",
+        };
+      }
+    } catch (error) {
+      console.error("Error during signup:", error);
+      this.response = {
+        success: false,
+        message: "server_error",
+      };
+    }
+
+    return this.response;
+  }
+
+  /**
+   * Send OTP for signup
+   */
+  async sendSignupOtp(email: string) {
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user) {
+      this.response = {
+        success: false,
+        message: 'user_not_found'
+      };
+      return this.response;
+    }
+
+    // Generate new OTP
+    const otp = this.generateOtp();
+    console.log("otp>>>>>>>>>>>>", otp);
+    const otpExpires = new Date();
+    otpExpires.setMinutes(otpExpires.getMinutes() + 10);
+
+    // Encrypt the OTP before storing
+    const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+    const encryptedOtp = enc.Base64.stringify(
+      HmacSHA256(otp, dbData.cryptoKey)
+    );
+
+    try {
+      // Update user with new OTP
+      await User.updateOne(
+        { email: email.toLowerCase() },
+        { 
+          $set: { 
+            otp: encryptedOtp,
+            otp_expires: otpExpires 
+          } 
+        }
+      );
+
+      // Send OTP to user's email
+      await sendOtpEmail({
+        email: email.toLowerCase(),
+        otp: otp,
+        type: 'signup-otp',
+        name: user.first_name || 'User'
+      });
+
+      this.response = {
+        success: true,
+        message: 'otp_resent',
+        data: {
+          email: email,
+          otp_expires: otpExpires
+        }
+      };
+    } catch (error) {
+      console.error('Error sending OTP:', error);
+      this.response = {
+        success: false,
+        message: 'failed_to_send_otp'
+      };
+    }
+
+    return this.response;
+  }
+
+  /**
+   * Verify OTP for signup
+   */
+  async verifySignupOtp(email: string, otp: string) {
+    // Get the latest user data from the database to ensure we have the most recent OTP
+    // Explicitly include otp and otp_expires fields which are normally excluded
+    const user = await User.findOne({ email: email.toLowerCase() })
+      .select('+otp +otp_expires');
+
+    if (!user) {
+      this.response = {
+        success: false,
+        message: 'user_not_found'
+      };
+      return this.response;
+    }
+
+    // Check if OTP exists and is not expired
+    const currentTime = new Date();
+    if (!user.otp || !user.otp_expires) {
+      this.response = {
+        success: false,
+        message: 'no_otp_found'
+      };
+      return this.response;
+    }
+
+    // Check if OTP is expired
+    if (currentTime > user.otp_expires) {
+      this.response = {
+        success: false,
+        message: 'otp_expired',
+        data: { canResend: true }
+      };
+      return this.response;
+    }
+
+    // Verify OTP
+    const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+    const encryptedOtp = enc.Base64.stringify(
+      HmacSHA256(otp, dbData.cryptoKey)
+    );
+
+    if (encryptedOtp !== user.otp) {
+      this.response = {
+        success: false,
+        message: 'invalid_otp'
+      };
+      return this.response;
+    }
+
+    try {
+      // Update user as verified and clear OTP
+      const updatedUser = await User.findOneAndUpdate(
+        { email: email.toLowerCase() },
+        { 
+          $set: { 
+            is_verified: 1,
+            is_active: 1,
+            otp: null,
+            otp_expires: null 
+          } 
+        },
+        { new: true }
+      ).select('-password -otp -otp_expires');
+
+      if (!updatedUser) {
+        throw new Error('Failed to update user');
+      }
+
+      // Generate auth token
+      const jwtData = await dbConfig.secretManagerConnection();
+      const token = jwt.sign(
+        { _id: updatedUser._id, email: updatedUser.email, account_type: updatedUser.account_type },
+        jwtData.jwtSecretKey as string,
+        { expiresIn: "1h" }
+      );
+
+      this.response = {
+        success: true,
+        message: 'account_verified',
+        data: {
+          user: updatedUser,
+          token
+        }
+      };
+    } catch (error) {
+      console.error('Error verifying OTP:', error);
+      this.response = {
+        success: false,
+        message: 'verification_failed'
+      };
+    }
+
     return this.response;
   }
 
@@ -386,7 +631,7 @@ class AuthServices {
           ).populate("member_information");
           if (checkSocialIdExists && checkSocialIdExists.is_active) {
             const user = checkSocialIdExists;
-            const tokenResult = await createToken(user);
+            const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, process.env.JWT_SECRET as string, { expiresIn: "1h" });
             const returnOp = {
               status: true,
               statusCode: 200,
@@ -442,7 +687,7 @@ class AuthServices {
       if (checkSocialIdExists && checkSocialIdExists?.is_active) {
         await User.updateOne({ email }, { $set: { fcm_token: fcmToken } });
         const user = checkSocialIdExists;
-        const tokenResult = await createToken(user);
+        const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, process.env.JWT_SECRET as string, { expiresIn: "1h" });
         const returnOp = {
           status: true,
           statusCode: 200,
@@ -476,7 +721,7 @@ class AuthServices {
           console.log("apple login email id(else)", checkSocialIdExists);
           if (checkSocialIdExists.is_active) {
             const user = checkSocialIdExists;
-            const tokenResult = await createToken(user);
+            const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, process.env.JWT_SECRET as string, { expiresIn: "1h" });
             const returnOp = {
               status: true,
               statusCode: 200,

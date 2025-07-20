@@ -9,9 +9,18 @@ import { DataFromHeader, ResponseObject } from "../Interfaces/commonInterfaces";
  */
 
 export const login = async (req: Request, res: Response) => {
-  const response: ResponseObject = await AuthService.login(req.body);
-
-  res.status(200).send(response);
+  try {
+    console.log("Login request received:", req.body);
+    const response: ResponseObject = await AuthService.login(req.body);
+    console.log("Login response:", response);
+    res.status(200).send(response);
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Internal server error"
+    });
+  }
 };
 
 /**
@@ -45,7 +54,41 @@ export const forgotPassword = async (
 };
 
 /**
- *  otp verification
+ *  Verify OTP for signup
+ */
+export const verifySignupOtp = async (req: Request, res: Response): Promise<any> => {
+  const { email, otp } = req.body;
+  
+  if (!email || !otp) {
+    return res.status(400).send({
+      success: false,
+      message: 'email_and_otp_required'
+    });
+  }
+
+  const response = await AuthService.verifySignupOtp(email, otp);
+  res.status(200).send(response);
+};
+
+/**
+ *  Resend OTP for signup
+ */
+export const resendSignupOtp = async (req: Request, res: Response): Promise<any> => {
+  const { email } = req.body;
+  
+  if (!email) {
+    return res.status(400).send({
+      success: false,
+      message: 'email_required'
+    });
+  }
+
+  const response = await AuthService.sendSignupOtp(email);
+  res.status(200).send(response);
+};
+
+/**
+ *  OTP verification for password reset
  */
 export const otpVerification = async (
   req: Request,

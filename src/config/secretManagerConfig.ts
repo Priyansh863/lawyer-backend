@@ -36,11 +36,6 @@
 //   s3: new AWS.S3({ region: CONFIG.region }),
 //   secretManagerConnection: secretManagerConnection,
 // };
-import {
-  GetSecretValueCommand,
-  SecretsManager,
-} from "@aws-sdk/client-secrets-manager";
-import { fromIni } from "@aws-sdk/credential-providers";
 import { isEmpty } from "lodash";
 import envConfig from "./envConfig";
 import * as AWS from "@aws-sdk/client-s3";
@@ -54,24 +49,20 @@ const secretManagerConnection = async () => {
       return secretManagerKeys;
     }
 
-    console.log(CONFIG, "CONFIGCONFIGCONFIGCONFIG");
-    let credentials;
-    if (CONFIG.env === "local") {
-      credentials = fromIni({ profile: CONFIG.awsConfigureProfile });
-    }
+    console.log("Using local environment configuration");
+    
+    // Static keys from env.json
+    secretManagerKeys = {
+      jwtSecretKey: CONFIG.jwtSecretKey,
+      crypto_key: CONFIG.crypto_key,
+      cryptoKey: CONFIG.cryptoKey,
+      apiUrl: CONFIG.apiUrl,
+      mongoUri: CONFIG.mongoUri,
+      bucket: CONFIG.bucket,
+      region: CONFIG.region,
+      secretManagerKey: CONFIG.secretManagerKey,
+    };
 
-    const client = new SecretsManager({
-      region: CONFIG.awsRegion,
-      credentials,
-    });
-
-    const { SecretString } = await client.send(
-      new GetSecretValueCommand({ SecretId: CONFIG.secretManagerKey })
-    );
-
-    if (SecretString) {
-      secretManagerKeys = JSON.parse(SecretString);
-    }
     return secretManagerKeys;
   } catch (error) {
     console.error("Error fetching secret keys: ", error);

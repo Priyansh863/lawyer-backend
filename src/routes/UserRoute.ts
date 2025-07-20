@@ -1,5 +1,6 @@
 import express from "express";
 import UserController from "../controllers/UserController";
+import Auth from "../middlewares/auth"; // Add this import
 
 const userRoute = express.Router();
 
@@ -17,5 +18,24 @@ userRoute.get("/list", UserController.getUserList);
 
 // Route to get user info by ID
 userRoute.get("/info/:id", UserController.getUserInfo);
+
+// Route to get user Cases by Role & ID
+userRoute.get("/cases",Auth,UserController.getCases)
+
+// Route to get related users(clients or lawyers) based on the user's role
+userRoute.get("/users/related", Auth, UserController.getRelatedUsers);
+
+// Create a new case
+userRoute.post("/CreateCases", Auth, UserController.createCase);
+
+// get all clients and lawyers
+userRoute.get("/clients-and-lawyers", Auth, UserController.getClientsAndLawyers);
+
+// Blog routes
+userRoute.get("/blogs", UserController.getBlogs);
+userRoute.get("/blogs/:id", UserController.getBlogById);
+userRoute.post("/blogs", UserController.createBlog);
+userRoute.put("/blogs/:id", UserController.updateBlog);
+userRoute.delete("/blogs/:id", UserController.deleteBlog);
 
 export default userRoute;

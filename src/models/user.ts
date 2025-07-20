@@ -70,6 +70,14 @@ const UserSchema = new mongoose.Schema(
     fcm_token: {
       type: String,
     },
+    otp: {
+      type: String,
+      select: false
+    },
+    otp_expires: {
+      type: Date,
+      select: false
+    }
   },
   {
     timestamps: {
@@ -80,10 +88,9 @@ const UserSchema = new mongoose.Schema(
 );
 
 
-
 UserSchema.set('toObject', { virtuals: true });
 UserSchema.set('toJSON', { virtuals: true });
 
-const User = mongoose.model<IUserSchema>('user', UserSchema);
+const User = mongoose.model<IUserSchema>('User', UserSchema);
 
 export { User, UserSchema };

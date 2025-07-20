@@ -43,7 +43,7 @@ export const uploadImg = async (file: string, fileName: string, userId: string) 
 
   try {
     const command = new PutObjectCommand(params);
-    console.log(command, "commandcommandcommandcommand");
+
     const response = await s3Client.send(command);
     return `https://${CONFIG.bucket}.s3.${CONFIG.awsRegion}.amazonaws.com/${params.Key}`;
   } catch (error) {
@@ -72,7 +72,7 @@ export const deleteFileFromS3 = async (filePathArray: string[]) => {
 
     const command = new DeleteObjectsCommand(params);
     const response = await s3Client.send(command);
-    console.log("Deleted objects from S3:", response);
+
   } catch (error) {
     console.error("Error deleting files from S3:", error);
     throw error;
