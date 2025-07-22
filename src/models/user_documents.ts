@@ -6,12 +6,13 @@ export interface IUserDocument extends Document {
   upload_date: Date;
   summary: string;
   status: "Pending" | "Approved" | "Rejected";
+  link: string;
 }
 
 const UserDocumentSchema: Schema = new Schema(
   {
     document_name: { type: String, required: true },
-    summary: { type: String, required: true },
+    summary: { type: String, required: false },
     status: { type: String, enum: ["Pending", "Approved", "Rejected"], required: true },
     uploaded_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     link: { type: String, required: true },

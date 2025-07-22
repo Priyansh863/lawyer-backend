@@ -150,13 +150,17 @@ class UserService {
     ];
   }
 
+  console.log("filter >>>", filter);
+
   // Pagination
   const skip = (page - 1) * limit;
 
   const cases = await Case.find(filter)
-    .sort({ updatedAt: -1 }) // newest first
-    .skip(skip)
-    .limit(limit);
+  .sort({ updatedAt: -1 }) // newest first
+  .skip(skip)
+  .limit(limit)
+  .populate('lawyer_id', 'first_name last_name')
+  .populate('client_id', 'first_name last_name');
 
   return cases;
 }

@@ -50,9 +50,13 @@ class UserController {
   }
 
   static async getCases(req: Request, res: Response) {
+    console.log("inside getcases controller >>>");
     try {
+      console.log("getting user id from request >>>");
       const userId = req["id"];
+      console.log("getting user role from request >>>");
       const role = req["role"];
+      console.log("getting query params from request >>>");
       const { status, query, page = 1, limit = 10 } = req.query as {
         status?: string;
         query?: string;
@@ -60,23 +64,25 @@ class UserController {
         limit?: string;
       };
 
+      console.log("converting page and limit to numbers >>>");
       const pageNumber = Number(page);
       const pageLimit = Number(limit);
 
-      console.log("inside getcases controller >>>", { userId, role, status, query });
-
+      console.log("getting cases from user service >>>");
       const cases = await UserService.getCasesByUserRole({
         userId,
         role,
-        status: status?.toString(),
-        query: query?.toString(),
+        status: (status && status[0].toUpperCase() + status.slice(1).toLowerCase()) || undefined,
+        query: (query && query[0].toUpperCase() + query.slice(1).toLowerCase()) || undefined,
         page: pageNumber,
         limit: pageLimit,
       });
 
+      console.log("returning cases from controller >>>");
       return res.status(200).json({ success: true, cases });
     } catch (error) {
       console.error("Error fetching cases:", error);
+      console.log("returning error from controller >>>");
       return res.status(500).json({ message: "Internal server error" });
     }
   }

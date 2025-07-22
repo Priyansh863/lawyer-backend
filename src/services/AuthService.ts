@@ -25,12 +25,14 @@ import {
 } from "../Interfaces/commonInterfaces";
 import { IUserSchema } from "../Interfaces/schemaInterfaces";
 import { BRACKET_MATCH_REGEX } from "../utils/constant";
+import { console } from "inspector";
 
 class AuthServices {
   /**
    * Standard response object
    */
   private response: ResponseObject;
+
 
   /**
    * Login
@@ -90,7 +92,7 @@ class AuthServices {
       const token = jwt.sign(
         { _id: userInfo._id, email: userInfo.email, account_type: userInfo.account_type },
         dbData.jwtSecretKey as string,
-        { expiresIn: "1h" }
+        { expiresIn: "1y" }
       );
       
       const userData = await User.findOne(query).select("-password");
@@ -166,17 +168,17 @@ class AuthServices {
         // Generate a token for the new user
         const token = jwt.sign(
           { _id: userData._id, email: userData.email },
-          process.env.JWT_SECRET as string,
-          { expiresIn: "1h" }
+          dbData.jwtSecretKey as string,
+          { expiresIn: "1y" }
         );
 
         // Send OTP to user's email
-        // await sendOtpEmail({
-        //   email: email.toLowerCase(),
-        //   otp: otp,
-        //   type: "signup-otp",
-        //   name: first_name,
-        // });
+        await sendOtpEmail({
+          email: email.toLowerCase(),
+          otp: otp,
+          type: "signup-otp",
+          name: first_name,
+        });
 
         this.response = {
           success: true,
@@ -343,8 +345,9 @@ class AuthServices {
       const jwtData = await dbConfig.secretManagerConnection();
       const token = jwt.sign(
         { _id: updatedUser._id, email: updatedUser.email, account_type: updatedUser.account_type },
-        jwtData.jwtSecretKey as string,
-        { expiresIn: "1h" }
+        dbData.jwtSecretKey as string,
+
+        { expiresIn: "1y" }
       );
 
       this.response = {
@@ -589,6 +592,7 @@ class AuthServices {
    * Apple signin
    */
   async appleLogin(data: IAppleLoginIn) {
+    const dbData = await dbConfig.secretManagerConnection();
     const { email, identityToken, fullName, fcmToken } = data;
     if (email && fullName && fullName.givenName) {
       const socialIdQuery = { email: email };
@@ -631,7 +635,8 @@ class AuthServices {
           ).populate("member_information");
           if (checkSocialIdExists && checkSocialIdExists.is_active) {
             const user = checkSocialIdExists;
-            const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, process.env.JWT_SECRET as string, { expiresIn: "1h" });
+            const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, dbData.jwtSecretKey as string,
+               { expiresIn: "1y" });
             const returnOp = {
               status: true,
               statusCode: 200,
@@ -687,7 +692,7 @@ class AuthServices {
       if (checkSocialIdExists && checkSocialIdExists?.is_active) {
         await User.updateOne({ email }, { $set: { fcm_token: fcmToken } });
         const user = checkSocialIdExists;
-        const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, process.env.JWT_SECRET as string, { expiresIn: "1h" });
+        const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, dbData.jwtSecretKey as string, { expiresIn: "1y" });
         const returnOp = {
           status: true,
           statusCode: 200,
@@ -721,7 +726,7 @@ class AuthServices {
           console.log("apple login email id(else)", checkSocialIdExists);
           if (checkSocialIdExists.is_active) {
             const user = checkSocialIdExists;
-            const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, process.env.JWT_SECRET as string, { expiresIn: "1h" });
+            const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, dbData.jwtSecretKey as string, { expiresIn: "1y" });
             const returnOp = {
               status: true,
               statusCode: 200,
@@ -814,6 +819,66 @@ class AuthServices {
     };
     return returnOp;
   };
+
+  /**
+   * Validate Token - Check if JWT token is expired
+   */
+  async validateToken(data: { token: string; tone?: string }) {
+    const { token, tone } = data;
+    
+    try {
+      const dbData = await dbConfig.secretManagerConnection();
+      console.log("----------oooooooooooooooooo:");
+      
+      console.log("Token received:",  dbData.jwtSecretKey);
+      // Verify and decode the JWT token
+      const decoded = jwt.verify(token, dbData.jwtSecretKey) as any;
+      
+      // Check if token has expired
+      const currentTime = Math.floor(Date.now() / 1000);
+      const isExpired = decoded.exp < currentTime;
+      
+      if (isExpired) {
+        return {
+          success: false,
+          message: tone === 'friendly' ? 'Your session has expired. Please log in again!' : 'Token has expired',
+          data: {
+            expired: true,
+            isExpired: true,
+            expiredAt: new Date(decoded.exp * 1000).toISOString()
+          }
+        };
+      } else {
+        // Token is valid
+        const timeUntilExpiry = decoded.exp - currentTime;
+        return {
+          success: true,
+          message: tone === 'friendly' ? 'Your session is still active!' : 'Token is valid',
+          data: {
+            expired: false,
+            isExpired: false,
+            userId: decoded.id,
+            expiresAt: new Date(decoded.exp * 1000).toISOString(),
+            timeUntilExpiry: timeUntilExpiry,
+            issuedAt: new Date(decoded.iat * 1000).toISOString()
+          }
+        };
+      }
+    } catch (error: any) {
+      // Token is invalid or malformed
+      console.error('Token validation error:', error.message);
+      return {
+        success: false,
+        message: tone === 'friendly' ? 'Invalid session. Please log in again!' : 'Invalid token',
+        data: {
+          expired: true,
+          isExpired: true,
+          error: error.message
+        }
+      };
+    }
+  }
+
 }
 
 export default new AuthServices();

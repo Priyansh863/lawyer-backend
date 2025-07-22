@@ -13,7 +13,8 @@ import {
   appleLogin,
   socialLogin,
   verifySignupOtp,
-  resendSignupOtp
+  resendSignupOtp,
+  validateToken
 } from "../controllers/AuthController";
 
 import {
@@ -27,7 +28,7 @@ const authRoutes = express.Router();
 
 authRoutes.post("/login", loginValidation, HandleErrors(login));
 
-authRoutes.post("/signup", signUpValidation, HandleErrors(signup));
+authRoutes.post("/signup", HandleErrors(signup));
 
 authRoutes.patch("/reset-password", resetPasswordValidation, HandleErrors(resetPassword));
 
@@ -44,5 +45,7 @@ authRoutes.get("/match-token", Auth, HandleErrors(matchToken));
 authRoutes.post("/verify-otp", HandleErrors(verifySignupOtp));
 
 authRoutes.post("/resend-otp", HandleErrors(resendSignupOtp));
+
+authRoutes.post("/validate-token", HandleErrors(validateToken));
 
 export default authRoutes;

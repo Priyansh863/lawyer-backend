@@ -133,3 +133,30 @@ export const socialLogin = async (
   const response: any = await AuthService.socialLogin(req.body);
   res.status(200).send(response);
 };
+
+/**
+ * Validate Token - Check if token is expired
+ */
+export const validateToken = async (
+  req: Request,
+  res: Response
+): Promise<any> => {
+  try {
+    const { token, tone } = req.body;
+    
+
+    const response: ResponseObject = await AuthService.validateToken({
+      token,
+      tone: tone || "default"
+    });
+    
+    res.status(200).send(response);
+  } catch (error) {
+    console.error("Token validation error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Internal server error",
+      isExpired: true
+    });
+  }
+};

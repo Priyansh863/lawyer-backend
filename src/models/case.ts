@@ -23,8 +23,8 @@ const CaseSchema: Schema = new Schema(
     description: { type: String, required: true },
     summary: { type: String, required: true },
     key_points: { type: [String], required: true },
-    client_id: { type: mongoose.Types.ObjectId, ref: "Client", required: true },
-    lawyer_id: { type: mongoose.Types.ObjectId, ref: "Lawyer", required: true },
+    client_id: { type: mongoose.Types.ObjectId, ref: "User", required: true },
+    lawyer_id: { type: mongoose.Types.ObjectId, ref: "User", required: true },
     files: { type: [String], default: [] },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }
