@@ -1,11 +1,12 @@
 import OpenAI from 'openai';
+import dbConfig from '../config/secretManagerConfig';
 
 class OpenAIUtils {
   private openai: OpenAI;
 
   constructor() {
     this.openai = new OpenAI({
-      apiKey: "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",
+      apiKey: "",
     });
   }
 

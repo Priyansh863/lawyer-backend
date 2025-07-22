@@ -61,6 +61,7 @@ const secretManagerConnection = async () => {
       bucket: CONFIG.bucket,
       region: CONFIG.region,
       secretManagerKey: CONFIG.secretManagerKey,
+      openaiApiKey: CONFIG.openaiApiKey,
     };
 
     return secretManagerKeys;
