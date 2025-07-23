@@ -22,9 +22,8 @@ class AIMarketingService {
   private openai: OpenAI;
 
   constructor() {
-    const envConfig = config();
     this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || envConfig.openaiApiKey
+      apiKey: "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",
     });
   }
 

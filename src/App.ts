@@ -50,6 +50,9 @@ import tokenRoute from "./routes/TokenRoute";
 import stripeRoute from "./routes/StripeRoute";
 import blogRoute from "./routes/BlogRoute";
 import postRoute from "./routes/PostRoute";
+import paymentRoute from "./routes/PaymentRoute";
+import contentMonitoringRoute from "./routes/ContentMonitoringRoute";
+import policyRoute from "./routes/PolicyRoute";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/metting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
@@ -60,6 +63,9 @@ app.use("/api/v1/dashboard", dashboardRoute);
 app.use("/api/v1/ai", aiRoute);
 app.use("/api/v1/chat", chatRoute);
 app.use("/api/v1/ai-marketing", aiMarketingRoute);
+app.use("/api/v1/payment", paymentRoute);
+app.use("/api/v1/content", contentMonitoringRoute);
+app.use("/api/v1/policy", policyRoute);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

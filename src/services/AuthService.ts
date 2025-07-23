@@ -108,6 +108,50 @@ class AuthServices {
   }
 
   /**
+   * Admin Login
+   */
+  async adminLogin(data: LoginData) {
+    const { email, password } = data;
+    const query = { email: email.toLowerCase() };
+
+    console.log("Admin Login data:>>>>>>>>>>>>>>>", data);
+    
+    // Find user
+    const userInfo = await User.findOne(query);
+    console.log("Admin Login userInfo:>>>>>>>>>>>>>>>", userInfo);
+
+    // console.log("Admin Login list:>>>>>>>>>>>>>>>", list);
+    if (!userInfo) {
+      return { success: false, message: "no_user_found" };
+    }
+    // Check if user is active
+    if (!userInfo.is_active) {
+      return { success: false, message: "user_not_active" };
+    }
+    // Check if user is verified
+    if (!userInfo.is_verified) {
+      return { success: false, message: "user_not_verified" };
+    }
+    // // Check if user is admin
+    // if (userInfo.account_type !== 'admin') {
+    //   return { success: false, message: "not_admin_user" };
+    // }
+    // Verify password
+    if (await bcrypt.compare(password.trim(), userInfo.password as string)) {
+      const dbData = await dbConfig.secretManagerConnection();
+      const token = jwt.sign(
+        { _id: userInfo._id, email: userInfo.email, account_type: userInfo.account_type },
+        dbData.jwtSecretKey as string,
+        { expiresIn: "1h" }
+      );
+      const userData = await User.findOne(query).select("-password");
+      return { success: true, message: "admin_login_successful", data: { userData, token } };
+    } else {
+      return { success: false, message: "credentials_not_match" };
+    }
+  }
+
+  /**
    * Generate a random OTP
    */
   private generateOtp(): string {

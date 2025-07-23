@@ -14,7 +14,8 @@ import {
   socialLogin,
   verifySignupOtp,
   resendSignupOtp,
-  validateToken
+  validateToken,
+  adminLogin
 } from "../controllers/AuthController";
 
 import {
@@ -47,5 +48,7 @@ authRoutes.post("/verify-otp", HandleErrors(verifySignupOtp));
 authRoutes.post("/resend-otp", HandleErrors(resendSignupOtp));
 
 authRoutes.post("/validate-token", HandleErrors(validateToken));
+
+authRoutes.post("/admin-login", loginValidation, HandleErrors(adminLogin));
 
 export default authRoutes;

@@ -160,3 +160,17 @@ export const validateToken = async (
     });
   }
 };
+
+/**
+ * Admin Login
+ */
+export const adminLogin = async (req: Request, res: Response) => {
+  try {
+    console.log("Admin Login request received:", req.body);
+    const response: ResponseObject = await AuthService.adminLogin(req.body);
+    res.status(200).send(response);
+  } catch (error) {
+    console.error("Admin Login error:", error);
+    res.status(500).send({ success: false, message: "Internal server error" });
+  }
+};
