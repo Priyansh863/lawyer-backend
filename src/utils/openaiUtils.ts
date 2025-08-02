@@ -5,7 +5,7 @@ class OpenAIUtils {
 
   constructor() {
     this.openai = new OpenAI({
-      apiKey: "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",
+      apiKey: "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",
     });
   }
 
