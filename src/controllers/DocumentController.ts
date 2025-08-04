@@ -190,4 +190,136 @@ export default class DocumentController {
       });
     }
   }
+
+  /**
+   * Get documents for a specific client
+   */
+  static async getClientDocuments(req: Request, res: Response) {
+    try {
+      const { clientId } = req.params;
+      const { status } = req.query;
+
+      const query: any = { uploaded_by: clientId };
+      
+      if (status && status !== 'all') {
+        query.status = status;
+      }
+      
+      const documents = await UserDocument.find(query)
+        .populate('uploaded_by', 'first_name last_name email')
+        .sort({ createdAt: -1 });
+
+      res.json({
+        success: true,
+        data: documents
+      });
+    } catch (error: any) {
+      console.error('Error fetching client documents:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch client documents'
+      });
+    }
+  }
+
+  /**
+   * Get document by ID
+   */
+  static async getDocumentById(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const document = await UserDocument.findById(id)
+        .populate('uploaded_by', 'first_name last_name email');
+
+      if (!document) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: document
+      });
+    } catch (error: any) {
+      console.error('Error fetching document:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch document'
+      });
+    }
+  }
+
+  /**
+   * Update document status
+   */
+  static async updateDocumentStatus(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (!['Pending', 'Approved', 'Rejected'].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid status. Must be Pending, Approved, or Rejected'
+        });
+      }
+
+      const document = await UserDocument.findByIdAndUpdate(
+        id,
+        { status },
+        { new: true, runValidators: true }
+      ).populate('uploaded_by', 'first_name last_name email');
+
+      if (!document) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Document status updated successfully',
+        data: document
+      });
+    } catch (error: any) {
+      console.error('Error updating document status:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to update document status'
+      });
+    }
+  }
+
+  /**
+   * Delete document
+   */
+  static async deleteDocument(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const document = await UserDocument.findByIdAndDelete(id);
+
+      if (!document) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Document deleted successfully'
+      });
+    } catch (error: any) {
+      console.error('Error deleting document:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to delete document'
+      });
+    }
+  }
 }

@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { ISecretManagerData } from "../Interfaces/commonInterfaces";
+import dbConfig from "../config/secretManagerConfig";
 
-export default function authenticate(req: Request, res: Response, next: NextFunction) {
+export default async function authenticate(req: Request, res: Response, next: NextFunction) {
   const token = req.headers.authorization?.split(" ")[1];
 
   if (!token) {
@@ -9,10 +11,13 @@ export default function authenticate(req: Request, res: Response, next: NextFunc
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as any;
+        const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+    
+    const decoded = jwt.verify(token, dbData.jwtSecretKey as string) as any;
     (req as any).user = decoded;
     next();
   } catch (error) {
+    console.error("Failed to authenticate user:", error);
     return res.status(401).json({ message: "Invalid token" });
   }
 }

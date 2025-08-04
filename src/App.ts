@@ -53,6 +53,7 @@ import postRoute from "./routes/PostRoute";
 import paymentRoute from "./routes/PaymentRoute";
 import contentMonitoringRoute from "./routes/ContentMonitoringRoute";
 import policyRoute from "./routes/PolicyRoute";
+import caseRoute from "./routes/CaseRoute";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/metting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
@@ -66,6 +67,9 @@ app.use("/api/v1/ai-marketing", aiMarketingRoute);
 app.use("/api/v1/payment", paymentRoute);
 app.use("/api/v1/content", contentMonitoringRoute);
 app.use("/api/v1/policy", policyRoute);
+app.use("/api/v1/case", caseRoute);
+app.use("/api/v1/stripe", stripeRoute);
+app.use("/api/v1/token", tokenRoute);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

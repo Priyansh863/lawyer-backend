@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import AIMarketing, { IAIMarketing } from '../models/AIMarketing';
-import config from '../config/envConfig';
+import dbConfig from "../config/secretManagerConfig";
 
 interface GeneratePostData {
   userId: string;
@@ -22,8 +22,15 @@ class AIMarketingService {
   private openai: OpenAI;
 
   constructor() {
+    // Constructor remains synchronous
+    this.openai = null as any; // Placeholder, will be initialized in `init`
+  }
+
+  // Asynchronous initialization method
+  async init(): Promise<void> {
+    const dbData = await dbConfig.secretManagerConnection();
     this.openai = new OpenAI({
-      apiKey: "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",
+      apiKey: dbData.openaiApiKey,
     });
   }
 
@@ -85,6 +92,7 @@ class AIMarketingService {
   static async generatePost(data: GeneratePostData): Promise<IAIMarketing> {
     try {
       const service = new AIMarketingService();
+      await service.init(); // Explicitly call the async initialization method
       
       // Generate AI content
       const generatedContent = await service.generateAIContent(

@@ -1,14 +1,20 @@
 import OpenAI from 'openai';
+import dbConfig from "../config/secretManagerConfig";
+
 
 class OpenAIUtils {
   private openai: OpenAI;
 
   constructor() {
-    this.openai = new OpenAI({
-      apiKey: "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",
-    });
+  
   }
 
+    async init(): Promise<void> {
+      const dbData = await dbConfig.secretManagerConnection();
+      this.openai = new OpenAI({
+        apiKey: dbData.openaiApiKey,
+      });
+    }
   /**
    * Generate summary using OpenAI GPT
    */
@@ -46,6 +52,7 @@ class OpenAIUtils {
    */
   async generateMarketingContent(prompt: string): Promise<string> {
     try {
+      await this.init();
       const completion = await this.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: [

@@ -128,6 +128,13 @@ export interface IUserTokenBalance extends Document {
   updated_at: Date;
 }
 
+// Interface for static methods
+export interface IUserTokenBalanceModel extends mongoose.Model<IUserTokenBalance> {
+  addTokens(userId: string, amount: number, transactionId?: string): Promise<IUserTokenBalance>;
+  useTokens(userId: string, amount: number): Promise<IUserTokenBalance>;
+  resetMonthlyUsage(userId: string): Promise<IUserTokenBalance>;
+}
+
 const UserTokenBalanceSchema = new Schema<IUserTokenBalance>(
   {
     user_id: {
@@ -228,6 +235,6 @@ UserTokenBalanceSchema.statics.resetMonthlyUsage = async function(userId: string
 };
 
 const TokenTransaction = mongoose.model<ITokenTransaction>('TokenTransaction', TokenTransactionSchema);
-const UserTokenBalance = mongoose.model<IUserTokenBalance>('UserTokenBalance', UserTokenBalanceSchema);
+const UserTokenBalance = mongoose.model<IUserTokenBalance, IUserTokenBalanceModel>('UserTokenBalance', UserTokenBalanceSchema);
 
 export { TokenTransaction, UserTokenBalance };
