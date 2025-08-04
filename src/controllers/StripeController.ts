@@ -6,7 +6,7 @@ import { User } from '../models/user';
 
 const envConfig = config();
 const stripe = new Stripe(envConfig.stripeSecretKey || '', {
-  apiVersion: '2025-06-30.basil'
+  apiVersion: '2025-07-30.basil'
 });
 
 interface AuthenticatedRequest extends Request {
