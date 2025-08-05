@@ -1,13 +1,27 @@
 import { Request, Response } from 'express';
 import Stripe from 'stripe';
 import config from '../config/envConfig';
+import secretManagerConfig from '../config/secretManagerConfig';
 import { TokenTransaction, UserTokenBalance, ETransactionType, ETransactionStatus } from '../models/token';
 import { User } from '../models/user';
 
-const envConfig = config();
-const stripe = new Stripe(envConfig.stripeSecretKey || '', {
-  apiVersion: '2025-07-30.basil'
-});
+// Initialize Stripe with secret manager
+let stripe: Stripe;
+
+const initializeStripe = async () => {
+  if (!stripe) {
+    const secrets = await secretManagerConfig.secretManagerConnection();
+    const stripeSecretKey = secrets?.stripeSecretKey;
+    
+    if (!stripeSecretKey) {
+      throw new Error('Stripe secret key not found in secret manager');
+    }
+    
+    stripe = new Stripe(stripeSecretKey);
+    console.log('Stripe initialized successfully');
+  }
+  return stripe;
+};
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -48,6 +62,9 @@ export default class StripeController {
    */
   static async createCheckoutSession(req: AuthenticatedRequest, res: Response) {
     try {
+      const stripe = await initializeStripe();
+      const secrets = await secretManagerConfig.secretManagerConnection();
+      const envConfig = config();
       const userId = req.user?.userId;
       const { packageId, tokens, amount, packageName } = req.body;
 
@@ -151,47 +168,57 @@ export default class StripeController {
    * POST /api/v1/stripe/webhook
    */
   static async handleWebhook(req: Request, res: Response) {
-    const sig = req.headers['stripe-signature'] as string;
-    const endpointSecret = envConfig.stripeWebhookSecret;
-
-    let event: Stripe.Event;
-
     try {
-      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret || '');
-    } catch (err: any) {
-      console.error('Webhook signature verification failed:', err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
+      const stripe = await initializeStripe();
+      const secrets = await secretManagerConfig.secretManagerConnection();
+      const endpointSecret = secrets?.stripeWebhookSecret;
 
-    try {
-      switch (event.type) {
-        case 'checkout.session.completed':
-          await StripeController.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
-          break;
+      const sig = req.headers['stripe-signature'] as string;
+      let event: Stripe.Event;
 
-        case 'payment_intent.succeeded':
-          await StripeController.handlePaymentIntentSucceeded(event.data.object as Stripe.PaymentIntent);
-          break;
-
-        case 'payment_intent.payment_failed':
-          await StripeController.handlePaymentIntentFailed(event.data.object as Stripe.PaymentIntent);
-          break;
-
-        case 'checkout.session.expired':
-          await StripeController.handleCheckoutSessionExpired(event.data.object as Stripe.Checkout.Session);
-          break;
-
-        default:
-          console.log(`Unhandled event type: ${event.type}`);
+      try {
+        event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret || '');
+      } catch (err: any) {
+        console.error('Webhook signature verification failed:', err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
       }
 
-      return res.status(200).json({ received: true });
+      try {
+        switch (event.type) {
+          case 'checkout.session.completed':
+            await StripeController.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+            break;
 
+          case 'payment_intent.succeeded':
+            await StripeController.handlePaymentIntentSucceeded(event.data.object as Stripe.PaymentIntent);
+            break;
+
+          case 'payment_intent.payment_failed':
+            await StripeController.handlePaymentIntentFailed(event.data.object as Stripe.PaymentIntent);
+            break;
+
+          case 'checkout.session.expired':
+            await StripeController.handleCheckoutSessionExpired(event.data.object as Stripe.Checkout.Session);
+            break;
+
+          default:
+            console.log(`Unhandled event type: ${event.type}`);
+        }
+
+        return res.status(200).json({ received: true });
+
+      } catch (error: any) {
+        console.error('Error handling webhook:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Webhook handler failed'
+        });
+      }
     } catch (error: any) {
-      console.error('Error handling webhook:', error);
+      console.error('Error initializing webhook handler:', error);
       return res.status(500).json({
         success: false,
-        message: 'Webhook handler failed'
+        message: 'Failed to initialize webhook handler'
       });
     }
   }
@@ -315,6 +342,7 @@ export default class StripeController {
    */
   static async getCheckoutSession(req: AuthenticatedRequest, res: Response) {
     try {
+      const stripe = await initializeStripe();
       const { sessionId } = req.params;
       const userId = req.user?.userId;
 
