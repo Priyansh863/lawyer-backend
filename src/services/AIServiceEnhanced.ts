@@ -1,7 +1,6 @@
 import UserDocument from '../models/user_documents';
 import { extractTextFromPDF, isPDFFile } from '../utils/pdfUtils';
 import openaiUtils from '../utils/openaiUtils';
-import openaiUtilsEnhanced from '../utils/openaiUtilsEnhanced';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
@@ -31,7 +30,7 @@ class AIServiceEnhanced {
       switch (fileType) {
         case 'pdf':
           extractedContent = await this.processPDF(fileUrl);
-          summary = await openaiUtilsEnhanced.generateDocumentSummary(extractedContent);
+          summary = await openaiUtils.generateDocumentSummary(extractedContent);
           break;
         
         case 'image':
@@ -135,7 +134,7 @@ class AIServiceEnhanced {
     
     try {
       // Use OpenAI Vision API to analyze the image
-      const summary = await openaiUtilsEnhanced.analyzeImage(fileUrl);
+      const summary = await openaiUtils.analyzeImage(fileUrl, fileName);
       return summary;
     } catch (error) {
       console.error('Error processing image:', error);
@@ -152,7 +151,7 @@ class AIServiceEnhanced {
     try {
       // For video processing, we'll extract frames and analyze them
       // This is a simplified approach - in production you might want to use video transcription services
-      const summary = await openaiUtilsEnhanced.analyzeVideo(fileUrl, fileName);
+      const summary = await openaiUtils.analyzeVideo(fileUrl, fileName);
       return summary;
     } catch (error) {
       console.error('Error processing video:', error);
