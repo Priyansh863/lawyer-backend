@@ -150,8 +150,10 @@ export default class StripeController {
 
       return res.status(200).json({
         success: true,
-        sessionUrl: session.url,
-        sessionId: session.id
+        data: {
+          url: session.url,
+          sessionId: session.id
+        }
       });
 
     } catch (error: any) {
@@ -253,8 +255,8 @@ export default class StripeController {
         }
       });
 
-      // Add tokens to user balance
-    //   await UserTokenBalance.addTokens(userId, parseInt(tokens));
+      // Add tokens to user balance - DISABLED: Now handled by frontend verification
+      // await UserTokenBalance.addTokens(userId, parseInt(tokens), transactionId);
 
       console.log(`Successfully processed token purchase: ${tokens} tokens for user ${userId}`);
 
@@ -381,6 +383,105 @@ export default class StripeController {
       return res.status(500).json({
         success: false,
         message: error.message || 'Failed to retrieve session'
+      });
+    }
+  }
+
+  /**
+   * Verify payment session and get status with transaction details
+   * This method handles ALL database updates when frontend verifies successful payment
+   * GET /api/v1/stripe/verify-session/:sessionId
+   */
+  static async verifyPaymentSession(req: AuthenticatedRequest, res: Response) {
+    try {
+      const stripe = await initializeStripe();
+      const { sessionId } = req.params;
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Retrieve session from Stripe
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+      // Verify session belongs to the user
+      if (session.metadata?.userId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied'
+        });
+      }
+
+      // Find the transaction in our database
+      let transaction = await TokenTransaction.findOne({
+        stripe_session_id: sessionId,
+        user_id: userId
+      });
+
+      // If payment is successful and transaction hasn't been processed yet
+      if (session.payment_status === 'paid' && transaction && transaction.status === ETransactionStatus.pending) {
+        console.log(`Processing successful payment for session: ${sessionId}`);
+        
+        // Update transaction status to completed
+        transaction = await TokenTransaction.findByIdAndUpdate(
+          transaction._id,
+          {
+            status: ETransactionStatus.completed,
+            stripe_payment_intent_id: session.payment_intent as string,
+            updated_at: new Date()
+          },
+          { new: true }
+        );
+
+        // Add tokens to user balance
+        const tokensToAdd = parseInt(session.metadata?.tokens || '0');
+        if (tokensToAdd > 0) {
+          await UserTokenBalance.addTokens(userId, tokensToAdd, transaction._id.toString());
+          console.log(`Added ${tokensToAdd} tokens to user ${userId}`);
+        }
+      }
+
+      // Get updated token balance
+      const tokenBalance = await UserTokenBalance.findOne({ user_id: userId });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          sessionId: session.id,
+          status: session.status,
+          paymentStatus: session.payment_status,
+          amountTotal: session.amount_total,
+          currency: session.currency,
+          customerEmail: session.customer_email,
+          metadata: session.metadata,
+          transaction: transaction ? {
+            _id: transaction._id,
+            type: transaction.type,
+            amount: transaction.amount,
+            status: transaction.status,
+            package_name: transaction.package_name,
+            description: transaction.description,
+            created_at: transaction.created_at
+          } : null,
+          tokenBalance: tokenBalance ? {
+            current_balance: tokenBalance.current_balance,
+            total_purchased: tokenBalance.total_purchased,
+            total_used: tokenBalance.total_used,
+            monthly_usage: tokenBalance.monthly_usage,
+            last_monthly_reset: tokenBalance.last_monthly_reset
+          } : null
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Error verifying payment session:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to verify session'
       });
     }
   }
