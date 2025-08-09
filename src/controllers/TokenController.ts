@@ -52,11 +52,11 @@ export default class TokenController {
       return res.status(200).json({
         success: true,
         data: {
-          tokens: tokenBalance.current_balance,
-          monthlyUsage: tokenBalance.monthly_usage,
-          totalPurchased: tokenBalance.total_purchased,
-          totalUsed: tokenBalance.total_used,
-          lastMonthlyReset: tokenBalance.last_monthly_reset
+          current_balance: tokenBalance.current_balance,
+          monthly_usage: tokenBalance.monthly_usage,
+          total_purchased: tokenBalance.total_purchased,
+          total_used: tokenBalance.total_used,
+          last_monthly_reset: tokenBalance.last_monthly_reset
         }
       });
 
@@ -109,21 +109,26 @@ export default class TokenController {
         success: true,
         data: {
           transactions: transactions.map(transaction => ({
-            id: transaction._id,
+            _id: transaction._id,
+            user_id: transaction.user_id,
             type: transaction.type,
             amount: transaction.amount,
             description: transaction.description,
             category: transaction.category,
             status: transaction.status,
-            date: transaction.created_at,
-            reference: transaction.stripe_payment_intent_id || transaction.reference_id
+            stripe_payment_intent_id: transaction.stripe_payment_intent_id,
+            stripe_session_id: transaction.stripe_session_id,
+            package_id: transaction.package_id,
+            package_name: transaction.package_name,
+            created_at: transaction.created_at,
+            updated_at: transaction.updated_at
           })),
           pagination: {
             currentPage: page,
             totalPages,
             totalTransactions: totalCount,
-            hasNextPage: page < totalPages,
-            hasPrevPage: page > 1
+            hasNext: page < totalPages,
+            hasPrev: page > 1
           }
         }
       });

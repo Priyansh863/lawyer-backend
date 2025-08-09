@@ -55,6 +55,7 @@
     "twilio": "^3.84.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.3",
     "@types/stripe": "^8.0.416",
     "@typescript-eslint/eslint-plugin": "^5.62.0",
     "serverless-plugin-typescript": "^2.1.5",

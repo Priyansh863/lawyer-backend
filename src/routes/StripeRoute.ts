@@ -25,4 +25,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), StripeControl
  */
 router.get('/session/:sessionId', authenticateToken, StripeController.getCheckoutSession);
 
+/**
+ * @route   GET /api/v1/stripe/verify-session/:sessionId
+ * @desc    Verify payment session and get status
+ * @access  Private
+ */
+router.get('/verify-session/:sessionId', authenticateToken, StripeController.verifyPaymentSession);
+
 export default router;
