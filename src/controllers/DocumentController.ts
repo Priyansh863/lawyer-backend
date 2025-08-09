@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import { uploadImg } from "../utils/fileUpload";
 import UserDocument from "../models/user_documents";
 import AIService from "../services/AIService";
-import AIServiceEnhanced from "../services/AIServiceEnhanced";
 import { isPDFFile } from "../utils/pdfUtils";
 import path from "path";
 
@@ -18,12 +17,33 @@ export default class DocumentController {
     try {
       const { userId, fileUrl, fileName, fileType } = req.body;
       
-      // Validate file type
-      if (!AIServiceEnhanced.isFileTypeSupported(fileName)) {
+      // Validate required fields
+      if (!userId || !fileUrl || !fileName) {
         return res.status(400).json({
           success: false,
-          message: `Unsupported file type. Supported types: ${AIServiceEnhanced.getSupportedExtensions().join(', ')}`
+          message: "Missing required fields: userId, fileUrl, fileName"
         });
+      }
+      
+      // Get file extension and determine file type
+      const fileExtension = path.extname(fileName).toLowerCase();
+      const supportedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.mp4', '.avi', '.mov'];
+      
+      if (!supportedExtensions.includes(fileExtension)) {
+        return res.status(400).json({
+          success: false,
+          message: `Unsupported file type. Supported types: ${supportedExtensions.join(', ')}`
+        });
+      }
+      
+      // Determine file type display name
+      let fileTypeDisplay = 'Document';
+      if (['.pdf'].includes(fileExtension)) {
+        fileTypeDisplay = 'PDF';
+      } else if (['.jpg', '.jpeg', '.png', '.gif'].includes(fileExtension)) {
+        fileTypeDisplay = 'Image';
+      } else if (['.mp4', '.avi', '.mov'].includes(fileExtension)) {
+        fileTypeDisplay = 'Video';
       }
       
       // Save to MongoDB
@@ -32,36 +52,58 @@ export default class DocumentController {
         status: "Pending",
         uploaded_by: userId,
         link: fileUrl,
-        file_type: AIServiceEnhanced.getFileTypeDisplayName(fileName)
+        file_type: fileTypeDisplay
       });
 
-      console.log(`Processing ${AIServiceEnhanced.getFileTypeDisplayName(fileName)} document: ${doc._id}`);
+      console.log(`Processing ${fileTypeDisplay} document: ${doc._id}`);
       
-      // Process document with enhanced AI service
-      const aiResult = await AIServiceEnhanced.processDocument(doc._id.toString());
-      
-      if (aiResult.success) {
-        // Fetch updated document with summary
-        const updatedDoc = await UserDocument.findById(doc._id);
-        
+      // Process document with AI service (only for PDFs for now)
+      if (isPDFFile(fileName)) {
+        try {
+          const aiResult = await AIService.processDocument(doc._id.toString());
+          
+          if (aiResult.success) {
+            // Fetch updated document with summary
+            const updatedDoc = await UserDocument.findById(doc._id);
+            
+            return res.status(200).json({
+              success: true,
+              message: `${fileTypeDisplay} processed successfully`,
+              document: updatedDoc,
+              summary: aiResult.summary
+            });
+          } else {
+            return res.status(200).json({
+              success: true,
+              message: `${fileTypeDisplay} uploaded but AI processing failed`,
+              document: doc,
+              aiError: aiResult.message
+            });
+          }
+        } catch (aiError: any) {
+          console.error('AI processing error:', aiError);
+          return res.status(200).json({
+            success: true,
+            message: `${fileTypeDisplay} uploaded but AI processing failed`,
+            document: doc,
+            aiError: aiError.message
+          });
+        }
+      } else {
+        // For non-PDF files, just return the uploaded document
         return res.status(200).json({
           success: true,
-          message: `${AIServiceEnhanced.getFileTypeDisplayName(fileName)} processed successfully`,
-          document: updatedDoc,
-          summary: aiResult.summary
-        });
-      } else {
-        return res.status(500).json({
-          success: false,
-          message: aiResult.message,
-          document: doc
+          message: `${fileTypeDisplay} uploaded successfully`,
+          document: doc,
+          note: "AI processing is currently only available for PDF files"
         });
       }
     } catch (error: any) {
       console.error("Enhanced upload document error:", error);
       return res.status(500).json({
         success: false,
-        message: error.message || "Failed to upload and process document"
+        message: "Failed to upload and process document",
+        error: error.message
       });
     }
   }

@@ -5,6 +5,7 @@ import dbConfig from "../config/secretManagerConfig";
 class OpenAIUtils {
   private openai: OpenAI | null = null;
   private initPromise: Promise<void> | null = null;
+  private initialized: boolean = false;
 
   constructor() {
     // Initialize OpenAI client immediately
@@ -14,23 +15,39 @@ class OpenAIUtils {
   private async init(): Promise<void> {
     try {
       const dbData = await dbConfig.secretManagerConnection();
+      
+      if (!dbData.openaiApiKey) {
+        throw new Error('OpenAI API key not found in configuration');
+      }
+      
       this.openai = new OpenAI({
         apiKey: dbData.openaiApiKey,
       });
+      
+      this.initialized = true;
       console.log('OpenAI client initialized successfully');
     } catch (error) {
       console.error('Failed to initialize OpenAI client:', error);
+      this.initialized = false;
+      this.openai = null;
       throw error;
     }
   }
 
   private async ensureInitialized(): Promise<void> {
     if (this.initPromise) {
-      await this.initPromise;
+      try {
+        await this.initPromise;
+      } catch (error) {
+        // Reset for retry
+        this.initPromise = this.init();
+        await this.initPromise;
+      }
       this.initPromise = null;
     }
-    if (!this.openai) {
-      throw new Error('OpenAI client not initialized');
+    
+    if (!this.initialized || !this.openai) {
+      throw new Error('OpenAI client not properly initialized');
     }
   }
   /**
