@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import Blog from '../models/blog';
 import { User } from '../models/user';
+import openaiUtilsEnhanced from '../utils/openaiUtilsEnhanced';
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -53,7 +54,7 @@ class BlogController {
         return;
       }
 
-      // Check if user exists
+      // Get user details for author field
       const user = await User.findById(userId);
       if (!user) {
         res.status(404).json({
@@ -63,74 +64,53 @@ class BlogController {
         return;
       }
 
-      // Create new blog
-      const newBlog = new Blog({
+      // Create the blog
+      const blog = new Blog({
         title,
         content,
-        author: userId,
-        excerpt,
+        excerpt: excerpt || content.substring(0, 200) + '...',
         category,
         status,
         image,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        author: userId
       });
 
-      await newBlog.save();
-      await newBlog.populate('author', 'first_name last_name email avatar');
+      await blog.save();
 
       res.status(201).json({
         success: true,
         message: 'Blog created successfully',
-        data: {
-          _id: newBlog._id,
-          title: newBlog.title,
-          content: newBlog.content,
-          author: newBlog.author,
-          excerpt: newBlog.excerpt,
-          category: newBlog.category,
-          status: newBlog.status,
-          image: newBlog.image,
-          createdAt: newBlog.createdAt,
-          updatedAt: newBlog.updatedAt
-        }
+        blog
       });
 
     } catch (error: any) {
       console.error('Error creating blog:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: error.message || 'Failed to create blog'
       });
     }
   }
 
-  // Get all blogs with pagination and filtering
-  static async getBlogs(req: AuthenticatedRequest, res: Response): Promise<void> {
+  // Get all blogs with filtering and pagination
+  static async getBlogs(req: Request, res: Response): Promise<void> {
     try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 10;
-      const category = req.query.category as string;
-      const status = req.query.status as string;
-      const author = req.query.author as string;
-      const search = req.query.search as string;
+      const { 
+        page = 1, 
+        limit = 10, 
+        category, 
+        status, 
+        search,
+        author 
+      } = req.query;
 
       // Build filter object
       const filter: any = {};
-
-      if (category) {
-        filter.category = category;
-      }
-
-      if (status) {
-        filter.status = status;
-      }
-
-      if (author) {
-        filter.author = author;
-      }
-
-      // Add search functionality
+      
+      if (category) filter.category = category;
+      if (status) filter.status = status;
+      if (author) filter.author = author;
+      
       if (search) {
         filter.$or = [
           { title: { $regex: search, $options: 'i' } },
@@ -139,70 +119,46 @@ class BlogController {
         ];
       }
 
-      // Calculate skip value for pagination
-      const skip = (page - 1) * limit;
+      // Calculate pagination
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const skip = (pageNum - 1) * limitNum;
 
       // Get blogs with pagination
       const blogs = await Blog.find(filter)
-        .populate('author', 'first_name last_name email avatar')
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit);
+        .limit(limitNum);
 
       // Get total count for pagination
-      const totalBlogs = await Blog.countDocuments(filter);
-      const totalPages = Math.ceil(totalBlogs / limit);
+      const total = await Blog.countDocuments(filter);
 
       res.status(200).json({
         success: true,
-        data: {
-          blogs: blogs.map(blog => ({
-            _id: blog._id,
-            title: blog.title,
-            content: blog.content,
-            author: blog.author,
-            excerpt: blog.excerpt,
-            category: blog.category,
-            status: blog.status,
-            image: blog.image,
-            createdAt: blog.createdAt,
-            updatedAt: blog.updatedAt
-          })),
-          pagination: {
-            currentPage: page,
-            totalPages,
-            totalBlogs,
-            hasNextPage: page < totalPages,
-            hasPrevPage: page > 1
-          }
+        blogs,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum)
         }
       });
 
     } catch (error: any) {
-      console.error('Error getting blogs:', error);
+      console.error('Error fetching blogs:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: error.message || 'Failed to fetch blogs'
       });
     }
   }
 
-  // Get single blog by ID
-  static async getBlogById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  // Get a single blog by ID
+  static async getBlogById(req: Request, res: Response): Promise<void> {
     try {
-      const { blogId } = req.params;
+      const { id } = req.params;
 
-      if (!blogId) {
-        res.status(400).json({
-          success: false,
-          message: 'Blog ID is required'
-        });
-        return;
-      }
-
-      const blog = await Blog.findById(blogId)
-        .populate('author', 'first_name last_name email avatar');
-
+      const blog = await Blog.findById(id);
       if (!blog) {
         res.status(404).json({
           success: false,
@@ -213,33 +169,22 @@ class BlogController {
 
       res.status(200).json({
         success: true,
-        data: {
-          _id: blog._id,
-          title: blog.title,
-          content: blog.content,
-          author: blog.author,
-          excerpt: blog.excerpt,
-          category: blog.category,
-          status: blog.status,
-          image: blog.image,
-          createdAt: blog.createdAt,
-          updatedAt: blog.updatedAt
-        }
+        blog
       });
 
     } catch (error: any) {
-      console.error('Error getting blog:', error);
+      console.error('Error fetching blog:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: error.message || 'Failed to fetch blog'
       });
     }
   }
 
-  // Update blog
+  // Update a blog
   static async updateBlog(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const { blogId } = req.params;
+      const { id } = req.params;
       const { title, content, excerpt, category, status, image } = req.body;
       const userId = req.user?.userId;
 
@@ -251,16 +196,7 @@ class BlogController {
         return;
       }
 
-      if (!blogId) {
-        res.status(400).json({
-          success: false,
-          message: 'Blog ID is required'
-        });
-        return;
-      }
-
-      // Find the blog
-      const blog = await Blog.findById(blogId);
+      const blog = await Blog.findById(id);
       if (!blog) {
         res.status(404).json({
           success: false,
@@ -278,75 +214,39 @@ class BlogController {
         return;
       }
 
-      // Validate category if provided
-      if (category) {
-        const validCategories = ['legal-advice', 'case-studies', 'law-updates', 'firm-news'];
-        if (!validCategories.includes(category)) {
-          res.status(400).json({
-            success: false,
-            message: 'Invalid category. Must be one of: ' + validCategories.join(', ')
-          });
-          return;
-        }
-      }
-
-      // Validate status if provided
+      // Update fields
+      if (title) blog.title = title;
+      if (content) blog.content = content;
+      if (excerpt) blog.excerpt = excerpt;
+      if (category) blog.category = category;
       if (status) {
-        const validStatuses = ['draft', 'published'];
-        if (!validStatuses.includes(status)) {
-          res.status(400).json({
-            success: false,
-            message: 'Invalid status. Must be either draft or published'
-          });
-          return;
-        }
+        blog.status = status;
       }
+      if (image) blog.image = image;
 
-      // Update blog
-      const updatedBlog = await Blog.findByIdAndUpdate(
-        blogId,
-        {
-          ...(title && { title }),
-          ...(content && { content }),
-          ...(excerpt && { excerpt }),
-          ...(category && { category }),
-          ...(status && { status }),
-          ...(image && { image }),
-          updatedAt: new Date()
-        },
-        { new: true }
-      ).populate('author', 'first_name last_name email avatar');
+      blog.updatedAt = new Date();
+
+      await blog.save();
 
       res.status(200).json({
         success: true,
         message: 'Blog updated successfully',
-        data: {
-          _id: updatedBlog!._id,
-          title: updatedBlog!.title,
-          content: updatedBlog!.content,
-          author: updatedBlog!.author,
-          excerpt: updatedBlog!.excerpt,
-          category: updatedBlog!.category,
-          status: updatedBlog!.status,
-          image: updatedBlog!.image,
-          createdAt: updatedBlog!.createdAt,
-          updatedAt: updatedBlog!.updatedAt
-        }
+        blog
       });
 
     } catch (error: any) {
       console.error('Error updating blog:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: error.message || 'Failed to update blog'
       });
     }
   }
 
-  // Delete blog
+  // Delete a blog
   static async deleteBlog(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const { blogId } = req.params;
+      const { id } = req.params;
       const userId = req.user?.userId;
 
       if (!userId) {
@@ -357,16 +257,7 @@ class BlogController {
         return;
       }
 
-      if (!blogId) {
-        res.status(400).json({
-          success: false,
-          message: 'Blog ID is required'
-        });
-        return;
-      }
-
-      // Find the blog
-      const blog = await Blog.findById(blogId);
+      const blog = await Blog.findById(id);
       if (!blog) {
         res.status(404).json({
           success: false,
@@ -384,8 +275,7 @@ class BlogController {
         return;
       }
 
-      // Delete the blog
-      await Blog.findByIdAndDelete(blogId);
+      await Blog.findByIdAndDelete(id);
 
       res.status(200).json({
         success: true,
@@ -396,18 +286,99 @@ class BlogController {
       console.error('Error deleting blog:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: error.message || 'Failed to delete blog'
       });
     }
   }
 
-  // Get user's own blogs
-  static async getMyBlogs(req: AuthenticatedRequest, res: Response): Promise<void> {
+  // Get blogs by category
+  static async getBlogsByCategory(req: Request, res: Response): Promise<void> {
+    try {
+      const { category } = req.params;
+      const { page = 1, limit = 10 } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const skip = (pageNum - 1) * limitNum;
+
+      const blogs = await Blog.find({ category, status: 'published' })
+        .sort({ publishedAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
+
+      const total = await Blog.countDocuments({ category, status: 'published' });
+
+      res.status(200).json({
+        success: true,
+        blogs,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum)
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Error fetching blogs by category:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch blogs'
+      });
+    }
+  }
+
+  // Get published blogs only
+  static async getPublishedBlogs(req: Request, res: Response): Promise<void> {
+    try {
+      const { page = 1, limit = 10, search } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const skip = (pageNum - 1) * limitNum;
+
+      const filter: any = { status: 'published' };
+      
+      if (search) {
+        filter.$or = [
+          { title: { $regex: search, $options: 'i' } },
+          { content: { $regex: search, $options: 'i' } },
+          { excerpt: { $regex: search, $options: 'i' } }
+        ];
+      }
+
+      const blogs = await Blog.find(filter)
+        .sort({ publishedAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
+
+      const total = await Blog.countDocuments(filter);
+
+      res.status(200).json({
+        success: true,
+        blogs,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum)
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Error fetching published blogs:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch blogs'
+      });
+    }
+  }
+
+  // Get user's blogs
+  static async getUserBlogs(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const userId = req.user?.userId;
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 10;
-      const status = req.query.status as string;
+      const { page = 1, limit = 10, status } = req.query;
 
       if (!userId) {
         res.status(401).json({
@@ -417,57 +388,201 @@ class BlogController {
         return;
       }
 
-      // Build filter object
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const skip = (pageNum - 1) * limitNum;
+
       const filter: any = { author: userId };
+      if (status) filter.status = status;
 
-      if (status) {
-        filter.status = status;
-      }
-
-      // Calculate skip value for pagination
-      const skip = (page - 1) * limit;
-
-      // Get user's blogs with pagination
       const blogs = await Blog.find(filter)
-        .populate('author', 'first_name last_name email avatar')
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit);
+        .limit(limitNum);
 
-      // Get total count for pagination
-      const totalBlogs = await Blog.countDocuments(filter);
-      const totalPages = Math.ceil(totalBlogs / limit);
+      const total = await Blog.countDocuments(filter);
 
       res.status(200).json({
         success: true,
-        data: {
-          blogs: blogs.map(blog => ({
-            _id: blog._id,
-            title: blog.title,
-            content: blog.content,
-            author: blog.author,
-            excerpt: blog.excerpt,
-            category: blog.category,
-            status: blog.status,
-            image: blog.image,
-            createdAt: blog.createdAt,
-            updatedAt: blog.updatedAt
-          })),
-          pagination: {
-            currentPage: page,
-            totalPages,
-            totalBlogs,
-            hasNextPage: page < totalPages,
-            hasPrevPage: page > 1
-          }
+        blogs,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum)
         }
       });
 
     } catch (error: any) {
-      console.error('Error getting user blogs:', error);
+      console.error('Error fetching user blogs:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: error.message || 'Failed to fetch blogs'
+      });
+    }
+  }
+
+  // Generate URL content with AI
+  static async generateUrlContent(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { 
+        url, 
+        description, 
+        hashtags = [], 
+        citations = [], 
+        floor, 
+        address, 
+        language = 'en' 
+      } = req.body;
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+        return;
+      }
+
+      // Validate required fields
+      if (!url) {
+        res.status(400).json({
+          success: false,
+          message: 'URL is required'
+        });
+        return;
+      }
+
+      // Validate URL format
+      try {
+        new URL(url);
+      } catch (error) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid URL format'
+        });
+        return;
+      }
+
+      // Validate language
+      const supportedLanguages = ['en', 'ko', 'es', 'fr', 'de', 'ja'];
+      if (!supportedLanguages.includes(language)) {
+        res.status(400).json({
+          success: false,
+          message: `Unsupported language. Supported languages: ${supportedLanguages.join(', ')}`
+        });
+        return;
+      }
+
+      console.log(`Generating URL content for: ${url} in language: ${language}`);
+
+      // Initialize OpenAI utils
+      await openaiUtilsEnhanced.init();
+
+      // Generate URL content with all provided fields
+      const content = await openaiUtilsEnhanced.generateUrlContent(
+        url,
+        description || '',
+        language,
+        Array.isArray(hashtags) ? hashtags : [],
+        Array.isArray(citations) ? citations : [],
+        floor || '',
+        address || ''
+      );
+
+      res.status(200).json({
+        success: true,
+        message: 'URL content generated successfully',
+        content,
+        metadata: {
+          url,
+          language,
+          hashtags: hashtags.length,
+          citations: citations.length,
+          hasFloor: !!floor,
+          hasAddress: !!address,
+          generatedAt: new Date().toISOString()
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Error generating URL content:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to generate URL content'
+      });
+    }
+  }
+
+  // Generate blog content with AI
+  static async generateBlogContent(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { 
+        topic, 
+        hashtags = [], 
+        citations = [], 
+        language = 'en' 
+      } = req.body;
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+        return;
+      }
+
+      // Validate required fields
+      if (!topic) {
+        res.status(400).json({
+          success: false,
+          message: 'Topic is required'
+        });
+        return;
+      }
+
+      // Validate language
+      const supportedLanguages = ['en', 'ko', 'es', 'fr', 'de', 'ja'];
+      if (!supportedLanguages.includes(language)) {
+        res.status(400).json({
+          success: false,
+          message: `Unsupported language. Supported languages: ${supportedLanguages.join(', ')}`
+        });
+        return;
+      }
+
+      console.log(`Generating blog content for topic: ${topic} in language: ${language}`);
+
+      // Initialize OpenAI utils
+      await openaiUtilsEnhanced.init();
+
+      // Generate blog content
+      const content = await openaiUtilsEnhanced.generateBlogContent(
+        topic,
+        language,
+        Array.isArray(hashtags) ? hashtags : [],
+        Array.isArray(citations) ? citations : []
+      );
+
+      res.status(200).json({
+        success: true,
+        message: 'Blog content generated successfully',
+        content,
+        metadata: {
+          topic,
+          language,
+          hashtags: hashtags.length,
+          citations: citations.length,
+          generatedAt: new Date().toISOString()
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Error generating blog content:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to generate blog content'
       });
     }
   }

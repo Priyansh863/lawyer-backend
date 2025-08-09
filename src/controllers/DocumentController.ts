@@ -2,9 +2,70 @@ import { Request, Response } from "express";
 import { uploadImg } from "../utils/fileUpload";
 import UserDocument from "../models/user_documents";
 import AIService from "../services/AIService";
+import AIServiceEnhanced from "../services/AIServiceEnhanced";
 import { isPDFFile } from "../utils/pdfUtils";
+import path from "path";
 
 export default class DocumentController {
+  /**
+   * Enhanced upload supporting PDF, Image, and Video files with AI processing
+   * @param req.body.file (base64 string)
+   * @param req.body.fileName (string)
+   * @param req.body.userId (string)
+   * @param req.body.fileType (optional: 'pdf' | 'image' | 'video')
+   */
+  static async uploadDocumentEnhanced(req: Request, res: Response) {
+    try {
+      const { userId, fileUrl, fileName, fileType } = req.body;
+      
+      // Validate file type
+      if (!AIServiceEnhanced.isFileTypeSupported(fileName)) {
+        return res.status(400).json({
+          success: false,
+          message: `Unsupported file type. Supported types: ${AIServiceEnhanced.getSupportedExtensions().join(', ')}`
+        });
+      }
+      
+      // Save to MongoDB
+      const doc = await UserDocument.create({
+        document_name: fileName,
+        status: "Pending",
+        uploaded_by: userId,
+        link: fileUrl,
+        file_type: AIServiceEnhanced.getFileTypeDisplayName(fileName)
+      });
+
+      console.log(`Processing ${AIServiceEnhanced.getFileTypeDisplayName(fileName)} document: ${doc._id}`);
+      
+      // Process document with enhanced AI service
+      const aiResult = await AIServiceEnhanced.processDocument(doc._id.toString());
+      
+      if (aiResult.success) {
+        // Fetch updated document with summary
+        const updatedDoc = await UserDocument.findById(doc._id);
+        
+        return res.status(200).json({
+          success: true,
+          message: `${AIServiceEnhanced.getFileTypeDisplayName(fileName)} processed successfully`,
+          document: updatedDoc,
+          summary: aiResult.summary
+        });
+      } else {
+        return res.status(500).json({
+          success: false,
+          message: aiResult.message,
+          document: doc
+        });
+      }
+    } catch (error: any) {
+      console.error("Enhanced upload document error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to upload and process document"
+      });
+    }
+  }
+
   /**
    * Uploads a document to S3 and returns the file URL
    * Automatically triggers AI processing for PDF files in background
@@ -63,7 +124,7 @@ export default class DocumentController {
    */
   static async listDocuments(req: Request, res: Response) {
     try {
-      const documents = await UserDocument.find();
+      const documents = await UserDocument.find().sort({ _id: -1 });
       return res.status(200).json({ success: true, documents });
     } catch (error: any) {
       console.error("List documents error:", error);
@@ -187,138 +248,6 @@ export default class DocumentController {
       return res.status(500).json({ 
         success: false, 
         message: error.message || "Failed to upload document and generate summary" 
-      });
-    }
-  }
-
-  /**
-   * Get documents for a specific client
-   */
-  static async getClientDocuments(req: Request, res: Response) {
-    try {
-      const { clientId } = req.params;
-      const { status } = req.query;
-
-      const query: any = { uploaded_by: clientId };
-      
-      if (status && status !== 'all') {
-        query.status = status;
-      }
-      
-      const documents = await UserDocument.find(query)
-        .populate('uploaded_by', 'first_name last_name email')
-        .sort({ createdAt: -1 });
-
-      res.json({
-        success: true,
-        data: documents
-      });
-    } catch (error: any) {
-      console.error('Error fetching client documents:', error);
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to fetch client documents'
-      });
-    }
-  }
-
-  /**
-   * Get document by ID
-   */
-  static async getDocumentById(req: Request, res: Response) {
-    try {
-      const { id } = req.params;
-
-      const document = await UserDocument.findById(id)
-        .populate('uploaded_by', 'first_name last_name email');
-
-      if (!document) {
-        return res.status(404).json({
-          success: false,
-          message: 'Document not found'
-        });
-      }
-
-      res.json({
-        success: true,
-        data: document
-      });
-    } catch (error: any) {
-      console.error('Error fetching document:', error);
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to fetch document'
-      });
-    }
-  }
-
-  /**
-   * Update document status
-   */
-  static async updateDocumentStatus(req: Request, res: Response) {
-    try {
-      const { id } = req.params;
-      const { status } = req.body;
-
-      if (!['Pending', 'Approved', 'Rejected'].includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid status. Must be Pending, Approved, or Rejected'
-        });
-      }
-
-      const document = await UserDocument.findByIdAndUpdate(
-        id,
-        { status },
-        { new: true, runValidators: true }
-      ).populate('uploaded_by', 'first_name last_name email');
-
-      if (!document) {
-        return res.status(404).json({
-          success: false,
-          message: 'Document not found'
-        });
-      }
-
-      res.json({
-        success: true,
-        message: 'Document status updated successfully',
-        data: document
-      });
-    } catch (error: any) {
-      console.error('Error updating document status:', error);
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to update document status'
-      });
-    }
-  }
-
-  /**
-   * Delete document
-   */
-  static async deleteDocument(req: Request, res: Response) {
-    try {
-      const { id } = req.params;
-
-      const document = await UserDocument.findByIdAndDelete(id);
-
-      if (!document) {
-        return res.status(404).json({
-          success: false,
-          message: 'Document not found'
-        });
-      }
-
-      res.json({
-        success: true,
-        message: 'Document deleted successfully'
-      });
-    } catch (error: any) {
-      console.error('Error deleting document:', error);
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to delete document'
       });
     }
   }

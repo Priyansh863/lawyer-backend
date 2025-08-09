@@ -39,11 +39,4 @@ router.post('/add-tokens', authenticateToken, TokenController.addTokens);
  */
 router.get('/token-stats', authenticateToken, TokenController.getTokenStats);
 
-/**
- * @route   GET /api/v1/token/overview
- * @desc    Get token overview (balance, total purchased, transactions)
- * @access  Private
- */
-router.get('/overview', authenticateToken, TokenController.getTokenOverview);
-
 export default router;

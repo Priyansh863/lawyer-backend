@@ -80,7 +80,7 @@ router.get('/my-blogs', [
     .optional()
     .isIn(['draft', 'published'])
     .withMessage('Invalid status')
-], BlogController.getMyBlogs);
+], BlogController.getUserBlogs);
 
 // Get single blog by ID
 router.get('/:blogId', [
