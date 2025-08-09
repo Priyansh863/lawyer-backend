@@ -440,7 +440,7 @@ export default class StripeController {
         // Add tokens to user balance
         const tokensToAdd = parseInt(session.metadata?.tokens || '0');
         if (tokensToAdd > 0) {
-          await UserTokenBalance.addTokens(userId, tokensToAdd, transaction._id.toString());
+          await UserTokenBalance.updateOne({ user_id: userId }, { $inc: { current_balance: tokensToAdd } });
           console.log(`Added ${tokensToAdd} tokens to user ${userId}`);
         }
       }
