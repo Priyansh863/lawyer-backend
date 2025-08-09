@@ -46,7 +46,7 @@ class OpenAIUtils {
       const truncatedText = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
 
       const completion = await this.openai!.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
@@ -68,64 +68,79 @@ class OpenAIUtils {
     }
   }
 
-  /**
-   * Analyze image using OpenAI Vision API
-   */
-  async analyzeImage(imageUrl: string, fileName: string): Promise<string> {
-    try {
-      await this.ensureInitialized();
-      
-      const completion = await this.openai!.chat.completions.create({
-        model: "gpt-4-vision-preview",
-        messages: [
-          {
-            role: "system",
-            content: "You are a legal document analyzer. Analyze this image and provide a concise, professional summary focusing on any legal content, text, signatures, or important visual elements. Keep the summary under 300 words."
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Please analyze this image file: ${fileName}`
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: imageUrl
-                }
-              }
-            ]
-          }
-        ],
-        max_tokens: 400,
-        temperature: 0.3,
-      });
+/**
+ * Analyze image and return a general descriptive summary
+ */
+async analyzeImage(imageUrl: string, fileName: string): Promise<string> {
+  try {
+    await this.ensureInitialized();
+    
+    const completion = await this.openai!.chat.completions.create({
+      model: "gpt-4o", // Use "gpt-4o" for higher accuracy
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful and descriptive media summarizer. Analyze the provided image and give a concise, clear description of what it contains. Mention key objects, people, actions, visible text, colors, and any notable details. Keep the summary under 200 words."
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `Here is an image to analyze: ${imageUrl}. The file name is "${fileName}". Please summarize the content of this image in a clear, human-readable way.`
+            },
+            {
+              type: "image_url",
+              image_url: { url: imageUrl }
+            }
+          ]
+        }
+      ],
+      max_tokens: 300,
+      temperature: 0.3
+    });
 
-      return completion.choices[0]?.message?.content || 'Unable to analyze image';
-    } catch (error) {
-      console.error('Error analyzing image with OpenAI:', error);
-      // Fallback for images - return a generic summary
-      return `Image analysis: ${fileName} - This appears to be a legal document or image file. Manual review recommended for detailed content analysis.`;
-    }
+    return completion.choices[0]?.message?.content || "Unable to analyze image";
+  } catch (error) {
+    console.error("Error analyzing image with OpenAI:", error);
+    return `Image analysis: ${fileName} - Unable to automatically analyze this image.`;
   }
+}
 
-  /**
-   * Analyze video (simplified approach - returns placeholder summary)
-   */
-  async analyzeVideo(videoUrl: string, fileName: string): Promise<string> {
-    try {
-      // Note: OpenAI doesn't directly support video analysis yet
-      // This is a placeholder implementation
-      console.log(`Video analysis requested for: ${fileName}`);
-      
-      // For now, return a generic summary
-      return `Video analysis: ${fileName} - This is a video file that may contain legal content, presentations, or depositions. Manual review is recommended for detailed content analysis. Consider using specialized video transcription services for text extraction.`;
-    } catch (error) {
-      console.error('Error analyzing video:', error);
-      return `Video file detected: ${fileName} - Unable to automatically analyze video content. Manual review required.`;
-    }
+/**
+ * Analyze video (placeholder — GPT can't see video directly)
+ */
+async analyzeVideo(videoUrl: string, fileName: string): Promise<string> {
+  try {
+    await this.ensureInitialized();
+
+    const completion = await this.openai!.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful and descriptive media summarizer. You are given a video file link. Since you cannot view video content directly, provide a general suggestion for what the video might contain and the best next steps to analyze it, such as extracting key frames or transcribing audio for summarization."
+        },
+        {
+          role: "user",
+          content: `Here is a video to analyze: ${videoUrl}. The file name is "${fileName}". Provide a short description based on the file type and suggest next steps for deeper analysis.`
+        }
+      ],
+      max_tokens: 200,
+      temperature: 0.3
+    });
+
+    return completion.choices[0]?.message?.content ||
+      `Video analysis: ${fileName} - Unable to automatically analyze video content.`;
+  } catch (error) {
+    console.error("Error analyzing video:", error);
+    return `Video file detected: ${fileName} - Unable to automatically analyze video content.`;
   }
+}
+
+
 
   /**
    * Generate marketing content using OpenAI GPT
