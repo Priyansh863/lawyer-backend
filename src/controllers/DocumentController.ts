@@ -59,7 +59,7 @@ export default class DocumentController {
       console.log(`Processing ${fileTypeDisplay} document: ${doc._id}`);
       
       // Process document with AI service (only for PDFs for now)
-      if (isPDFFile(fileName)) {
+      if (fileName) {
         try {
           const aiResult = await AIService.processDocument(doc._id.toString());
           
@@ -90,15 +90,7 @@ export default class DocumentController {
             aiError: aiError.message
           });
         }
-      } else {
-        // For non-PDF files, just return the uploaded document
-        return res.status(200).json({
-          success: true,
-          message: `${fileTypeDisplay} uploaded successfully`,
-          document: doc,
-          note: "AI processing is currently only available for PDF files"
-        });
-      }
+      } 
     } catch (error: any) {
       console.error("Enhanced upload document error:", error);
       return res.status(500).json({
