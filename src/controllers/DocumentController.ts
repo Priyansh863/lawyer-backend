@@ -28,14 +28,7 @@ export default class DocumentController {
       
       // Get file extension and determine file type
       const fileExtension = path.extname(fileName).toLowerCase();
-      const supportedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.mp4', '.avi', '.mov'];
-      
-      if (!supportedExtensions.includes(fileExtension)) {
-        return res.status(400).json({
-          success: false,
-          message: `Unsupported file type. Supported types: ${supportedExtensions.join(', ')}`
-        });
-      }
+  
       
       // Determine file type display name
       let fileTypeDisplay = 'Document';

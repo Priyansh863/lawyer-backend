@@ -1,4 +1,5 @@
 import UserDocument from '../models/user_documents';
+import { extractTextFromDocument, isSupportedDocument, getDocumentType, cleanTextForAI } from '../utils/documentUtils';
 import { extractTextFromPDF, isPDFFile } from '../utils/pdfUtils';
 import openaiUtils from '../utils/openaiUtils';
 import path from 'path';
@@ -27,8 +28,13 @@ async processDocument(documentId: string): Promise<{ success: boolean; message: 
 
     switch (fileType) {
       case 'pdf':
-        extractedContent = await this.processPDF(fileUrl);
-        summary = await openaiUtils.generateDocumentSummary(extractedContent);
+      case 'docx':
+      case 'doc':
+      case 'txt':
+      case 'text':
+        extractedContent = await extractTextFromDocument(fileUrl, fileName);
+        const cleanedContent = cleanTextForAI(extractedContent);
+        summary = await openaiUtils.generateDocumentSummary(cleanedContent);
         break;
       
       case 'image':
@@ -83,6 +89,14 @@ private getFileType(fileName: string): string {
   const fileTypes = {
     // PDF
     '.pdf': 'pdf',
+    
+    // Word Documents
+    '.docx': 'docx',
+    '.doc': 'doc',
+    
+    // Text Files
+    '.txt': 'txt',
+    '.text': 'text',
     
     // Images
     '.jpg': 'image',
@@ -186,6 +200,10 @@ getFileTypeDisplayName(fileName: string): string {
   const fileType = this.getFileType(fileName);
   const displayNames = {
     'pdf': 'PDF Document',
+    'docx': 'Word Document',
+    'doc': 'Word Document',
+    'txt': 'Text File',
+    'text': 'Text File',
     'image': 'Image',
     'video': 'Video',
     'unknown': 'Unknown File Type'
