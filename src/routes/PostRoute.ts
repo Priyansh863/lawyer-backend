@@ -62,6 +62,7 @@ router.post('/create', [
 
 // Get all posts with pagination and filtering
 router.get('/list', [
+  authenticateToken,
   query('page')
     .optional()
     .isInt({ min: 1 })
@@ -124,12 +125,51 @@ router.post('/:slug/qr-code', [
     .withMessage('Invalid slug format')
 ], PostController.generateQrCode);
 
-// Get single post by slug
-router.get('/:slug', [
+// Generate AI post
+router.post('/generate-ai', [
+  authenticateToken,
+  body('prompt')
+    .optional()
+    .isLength({ min: 3, max: 500 })
+    .withMessage('Prompt must be between 3 and 500 characters'),
+  body('topic')
+    .optional()
+    .isLength({ min: 3, max: 200 })
+    .withMessage('Topic must be between 3 and 200 characters'),
+  body('tone')
+    .optional()
+    .isIn(['professional', 'casual', 'formal', 'friendly'])
+    .withMessage('Invalid tone. Must be professional, casual, formal, or friendly'),
+  body('length')
+    .optional()
+    .isIn(['short', 'long'])
+    .withMessage('Length must be either short or long'),
+  body('includeHashtags')
+    .optional()
+    .isBoolean()
+    .withMessage('includeHashtags must be a boolean')
+], (req, res) => {
+  const postController = new PostController ();
+  postController.generateAiPost(req, res);
+});
+
+// Get single post by ID
+router.get('/id/:id', [
+  authenticateToken,
+  param('id')
+    .notEmpty()
+    .withMessage('Post ID is required')
+    .isMongoId()
+    .withMessage('Invalid post ID format')
+], PostController.getPostById);
+
+// Get single post by slug  
+router.get('/slug/:slug', [
+  authenticateToken,
   param('slug')
     .notEmpty()
     .withMessage('Post slug is required')
-    .matches(/^[a-z0-9-]+$/)
+    .matches(/^[a-z0-9가-힣-]+$/)
     .withMessage('Invalid slug format')
 ], PostController.getPostBySlug);
 

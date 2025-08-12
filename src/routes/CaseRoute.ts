@@ -9,8 +9,8 @@ router.use(authenticate);
 
 // Case routes
 router.get('/list', CaseController.getAllCases);
-router.get('/client/:clientId', CaseController.getClientCases);
-router.get('/lawyer/:lawyerId', CaseController.getLawyerCases);
+router.get('/client/:clientId', authenticate,CaseController.getClientCases);
+router.get('/lawyer/:lawyerId', authenticate,CaseController.getLawyerCases);
 router.get('/:id', CaseController.getCaseById);
 router.post('/create', CaseController.createCase);
 router.put('/:id', CaseController.updateCase);

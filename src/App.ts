@@ -14,6 +14,7 @@ import dashboardRoute from "./routes/DashboardRoute";
 import aiRoute from "./routes/AIRoute";
 import chatRoute from "./routes/ChatRoute";
 import aiMarketingRoute from "./routes/AIMarketingRoute";
+import secureLinkRoute from "./routes/SecureLinkRoute";
 import SocketService from "./services/SocketService";
 
 const app = express();
@@ -55,7 +56,7 @@ import contentMonitoringRoute from "./routes/ContentMonitoringRoute";
 import policyRoute from "./routes/PolicyRoute";
 import caseRoute from "./routes/CaseRoute";
 app.use("/api/v1/document", documentRoute);
-app.use("/api/v1/metting", meetingRoute);
+app.use("/api/v1/meeting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
 app.use("/api/v1/stripe", stripeRoute);
 app.use("/api/v1/blog", blogRoute);
@@ -70,6 +71,7 @@ app.use("/api/v1/policy", policyRoute);
 app.use("/api/v1/case", caseRoute);
 app.use("/api/v1/stripe", stripeRoute);
 app.use("/api/v1/token", tokenRoute);
+app.use("/api/v1/secure-link", secureLinkRoute);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

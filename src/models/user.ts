@@ -77,6 +77,17 @@ const UserSchema = new mongoose.Schema(
     otp_expires: {
       type: Date,
       select: false
+    },
+    notes: {
+      type: String,
+      required: false,
+      default: ''
+    },
+    charges: {
+      type: Number,
+      required: false,
+      default: 0,
+      min: 0
     }
   },
   {

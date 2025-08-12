@@ -31,6 +31,8 @@ export interface IUserSchema {
   rating_updated_for_others?: boolean;
   otp?: string;
   otp_expires?: Date;
+  notes?: string;
+  updated_at?: Date;
 }
 
 // Admin Schema interface

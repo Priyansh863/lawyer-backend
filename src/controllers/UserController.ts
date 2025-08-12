@@ -213,6 +213,126 @@ class UserController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  /**
+   * Update client notes (lawyer only)
+   * @param req.params.clientId (string) - Client ID
+   * @param req.body.notes (string) - Notes content
+   */
+  static async updateClientNotes(req: Request, res: Response) {
+    try {
+      const { clientId } = req.params;
+      const { notes } = req.body;
+      const lawyer_id = (req as any).user._id;
+      const lawyer = (req as any).user;
+      
+      // Verify the requester is a lawyer
+      if (lawyer.account_type !== 'lawyer') {
+        return res.status(403).json({
+          success: false,
+          message: "Only lawyers can update client notes"
+        });
+      }
+      
+      // Find and update the client
+      const client = await User.findById(clientId);
+      if (!client || client.account_type !== 'client') {
+        return res.status(404).json({
+          success: false,
+          message: "Client not found"
+        });
+      }
+      
+      // Update notes
+      client.notes = notes || '';
+      await client.save();
+      
+      return res.status(200).json({
+        success: true,
+        message: "Client notes updated successfully",
+        data: {
+          client_id: client._id,
+          notes: client.notes,
+          updated_at: client.updated_at
+        }
+      });
+      
+    } catch (error: any) {
+      console.error('Error updating client notes:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to update client notes'
+      });
+    }
+  }
+
+  /**
+   * Get client notes (lawyer only)
+   * @param req.params.clientId (string) - Client ID
+   */
+  static async getClientNotes(req: Request, res: Response) {
+    try {
+      const { clientId } = req.params;
+      const lawyer = (req as any).user;
+      
+      // Verify the requester is a lawyer
+      if (lawyer.account_type !== 'lawyer') {
+        return res.status(403).json({
+          success: false,
+          message: "Only lawyers can view client notes"
+        });
+      }
+      
+      // Find the client
+      const client = await User.findById(clientId).select('notes first_name last_name email');
+      if (!client || client.account_type !== 'client') {
+        return res.status(404).json({
+          success: false,
+          message: "Client not found"
+        });
+      }
+      
+      return res.status(200).json({
+        success: true,
+        data: {
+          client_id: client._id,
+          client_name: `${client.first_name} ${client.last_name}`.trim(),
+          client_email: client.email,
+          notes: client.notes || ''
+        }
+      });
+      
+    } catch (error: any) {
+      console.error('Error getting client notes:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to get client notes'
+      });
+    }
+  }
+
+  /**
+ * Get all lawyers for sharing documents
+ */
+static async getLawyers(req: Request, res: Response) {
+  try {
+    const lawyers = await User.find(
+      { account_type: 'lawyer' },
+      'first_name last_name email account_type'
+    ).sort({ first_name: 1 });
+
+    res.json({
+      success: true,
+      data: lawyers
+    });
+  } catch (error: any) {
+    console.error('Error fetching lawyers:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch lawyers'
+    });
+  }
+}
 }
 
 export default UserController;

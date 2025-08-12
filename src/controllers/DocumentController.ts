@@ -104,7 +104,9 @@ export default class DocumentController {
   static async uploadDocument(req: Request, res: Response) {
     // Save document record after upload
     try {
-      const { userId, fileUrl, fileName } = req.body;
+      const { userId, fileUrl, fileName,privacy } = req.body;
+
+      console.log("re.body=======",req.body)
       
       // Save to MongoDB
       const doc = await UserDocument.create({
@@ -112,6 +114,7 @@ export default class DocumentController {
         status: "Pending",
         uploaded_by: userId,
         link: fileUrl,
+        privacy
       });
 
       // Automatically trigger AI processing for PDF files in background

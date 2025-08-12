@@ -155,10 +155,7 @@ class UserService {
   // Pagination
   const skip = (page - 1) * limit;
 
-  const cases = await Case.find(filter)
-  .sort({ updatedAt: -1 }) // newest first
-  .skip(skip)
-  .limit(limit)
+  const cases = await Case.find(filter).sort({ _id: -1 })
   .populate('lawyer_id', 'first_name last_name')
   .populate('client_id', 'first_name last_name');
 

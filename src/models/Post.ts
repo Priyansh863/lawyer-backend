@@ -24,10 +24,20 @@ export interface IPost extends Document {
   slug: string;
   spatialInfo?: ISpatialInfo;
   citations: ICitation[];
+  hashtag?: string;
+  hashtags?: string[];
+  usefulLinks?: {
+    title: string;
+    url: string;
+    description?: string;
+  }[];
   customUrl?: string;
   shortUrl?: string;
   qrCodeUrl?: string;
   status: 'draft' | 'published';
+  isAiGenerated?: boolean;
+  aiPrompt?: string;
+  image?: string;
   createdAt: Date;
   updatedAt: Date;
   
@@ -168,13 +178,65 @@ const PostSchema: Schema = new Schema({
     trim: true,
     validate: {
       validator: function(v: string) {
-        return /^[a-z0-9-]+$/.test(v);
+        // Support Korean characters (가-힣), English letters, numbers, and hyphens
+        return /^[a-z0-9가-힣-]+$/.test(v);
       },
-      message: 'Slug can only contain lowercase letters, numbers, and hyphens'
+      message: 'Slug can only contain lowercase letters, Korean characters, numbers, and hyphens'
     }
   },
   spatialInfo: SpatialInfoSchema,
   citations: [CitationSchema],
+  hashtag: {
+    type: String,
+    maxlength: 100,
+    validate: {
+      validator: function(v: string) {
+        if (!v) return true;
+        // Support Korean characters (가-힣), English letters, numbers, and underscores
+        return /^#[a-zA-Z0-9_가-힣]+$/.test(v);
+      },
+      message: 'Hashtag must start with # and contain only letters, Korean characters, numbers, and underscores'
+    }
+  },
+  hashtags: [{
+    type: String,
+    maxlength: 100,
+    validate: {
+      validator: function(v: string) {
+        if (!v) return true;
+        // Support Korean characters (가-힣), English letters, numbers, and underscores
+        return /^#[a-zA-Z0-9_가-힣]+$/.test(v);
+      },
+      message: 'Hashtag must start with # and contain only letters, Korean characters, numbers, and underscores'
+    }
+  }],
+  usefulLinks: [{
+    title: {
+      type: String,
+      required: true,
+      maxlength: 200
+    },
+    url: {
+      type: String,
+      required: true,
+      maxlength: 1000,
+      validate: {
+        validator: function(v: string) {
+          try {
+            new URL(v);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        message: 'Invalid URL format'
+      }
+    },
+    description: {
+      type: String,
+      maxlength: 500
+    }
+  }],
   customUrl: {
     type: String,
     maxlength: 1000
@@ -190,7 +252,19 @@ const PostSchema: Schema = new Schema({
   status: {
     type: String,
     enum: ['draft', 'published'],
-    default: 'draft'
+    default: 'published'
+  },
+  isAiGenerated: {
+    type: Boolean,
+    default: false
+  },
+  aiPrompt: {
+    type: String,
+    maxlength: 1000
+  },
+  image: {
+    type: String,
+    maxlength: 1000
   }
 }, {
   timestamps: true
@@ -213,12 +287,14 @@ PostSchema.pre('save', function(next) {
 
 // Instance methods
 PostSchema.methods.generateCustomUrl = function(): string {
-  const baseUrl = process.env.BASE_URL || 'https://yourapp.com';
-  let url = `${baseUrl}/${this.slug}`;
+  // Use frontend URL for custom URLs
+  const frontendUrl = process.env.FRONTEND_URL || process.env.frontendUrl || 'http://localhost:3000';
+  const params = new URLSearchParams();
+  
+  // Always add post ID
+  params.append('id', this._id.toString());
   
   if (this.spatialInfo && this.spatialInfo.latitude && this.spatialInfo.longitude) {
-    const params = new URLSearchParams();
-    
     if (this.spatialInfo.planet) params.append('planet', this.spatialInfo.planet);
     params.append('lat', this.spatialInfo.latitude.toString());
     params.append('lng', this.spatialInfo.longitude.toString());
@@ -234,15 +310,14 @@ PostSchema.methods.generateCustomUrl = function(): string {
     if (this.spatialInfo.floor !== null && this.spatialInfo.floor !== undefined) {
       params.append('floor', this.spatialInfo.floor.toString());
     }
-    
-    url += `?${params.toString()}`;
   }
   
-  return url;
+  // Use existing slug route for post view
+  return `${frontendUrl}/${this.slug}?${params.toString()}`;
 };
 
 PostSchema.methods.generateShortUrl = function(): string {
-  const baseUrl = process.env.BASE_URL || 'https://yourapp.com';
+  const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
   let url = `${baseUrl}/l/${this.slug}`;
   
   if (this.spatialInfo && this.spatialInfo.latitude && this.spatialInfo.longitude) {

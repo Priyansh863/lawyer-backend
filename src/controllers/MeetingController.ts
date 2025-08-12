@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import Meeting, { EMeetingStatus } from "../models/meeting";
 import { User } from "../models/user";
+import mongoose from 'mongoose';
 
 // Interface for populated user fields
 interface PopulatedUser {
@@ -8,6 +9,7 @@ interface PopulatedUser {
   first_name: string;
   last_name: string;
   email: string;
+  account_type: string;
 }
 
 // Interface for populated meeting
@@ -15,99 +17,279 @@ interface PopulatedMeeting {
   _id: string;
   lawyer_id: PopulatedUser;
   client_id: PopulatedUser;
-  meeting_link: string;
+  meeting_title: string;
+  meeting_description?: string;
+  requested_date: Date;
+  requested_time: string;
+  meeting_link?: string;
   status: string;
+  approval_date?: Date;
+  rejection_reason?: string;
+  notes?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export default class MeetingController {
   /**
-   * Create a new meeting
-   * @param req.body.lawyer_id (string)
-   * @param req.body.client_id (string)
-   * @param req.body.meeting_link (string)
+   * Create a new meeting request
+   * - If client creates: goes to lawyer for approval (pending status)
+   * - If lawyer creates: auto-approved (approved status)
    */
-  static async createMeeting(req: Request, res: Response) {
+  static async createMeetingRequest(req: Request, res: Response) {
     try {
-      const { lawyerId, clientId, meetingLink } = req.body;
+      const { 
+        clientId, 
+        lawyerId, 
+        meetingLink, 
+        meeting_title, 
+        meeting_description, 
+        requested_date, 
+        requested_time 
+      } = req.body;
+      
+      const userId = (req as any).user?.userId || (req as any).user?._id;
 
-      // Validate required fields
-      if (!lawyerId || !clientId || !meetingLink) {
-        return res.status(400).json({
-          success: false,
-          message: "lawyer_id, client_id, and meeting_link are required"
-        });
+      const user= await User.findById(userId).select('first_name last_name email account_type');
+
+     
+
+ 
+      // Determine meeting status based on who creates it
+      let status = EMeetingStatus.pending;
+      let approval_date = null;
+      
+      // If lawyer creates the meeting, it's auto-approved
+      if (user.account_type === 'lawyer') {
+        // Lawyer can create meetings with any client
+        status = EMeetingStatus.approved;
+        approval_date = new Date();
       }
+      // If client creates the meeting, it needs lawyer approval
+      else if (user.account_type === 'client') {
+        // Client can create meetings with any lawyer
+        status = EMeetingStatus.pending;
+      }
+     
 
-      // Create the meeting
+      // Create the meeting request
       const meeting = await Meeting.create({
-        lawyer_id:lawyerId,
-        client_id:clientId,
-        meeting_link:meetingLink,
-        status: EMeetingStatus.scheduled
+        lawyer_id: lawyerId,
+        client_id: clientId,
+        meeting_title: meeting_title || 'Video Consultation',
+        meeting_description: meeting_description || '',
+        requested_date: requested_date ? new Date(requested_date) : new Date(),
+        requested_time: requested_time || '',
+        meeting_link: meetingLink || '',
+        status: status,
+        approval_date: approval_date,
+        created_by: userId
       });
 
       // Populate lawyer and client details for response
       const populatedMeeting = await Meeting.findById(meeting._id)
-        .populate('lawyer_id', 'first_name last_name email')
-        .populate('client_id', 'first_name last_name email');
+        .populate('lawyer_id', 'first_name last_name email account_type charges')
+        .populate('client_id', 'first_name last_name email account_type')
+        .populate('created_by', 'first_name last_name email account_type');
+
+      const message = status === EMeetingStatus.approved 
+        ? "Meeting created and approved successfully" 
+        : "Meeting request created successfully and sent for approval";
 
       return res.status(201).json({
         success: true,
-        message: "Meeting created successfully",
-        meeting: populatedMeeting
+        message: message,
+        data: populatedMeeting
       });
 
     } catch (error: any) {
-      console.error("Create meeting error:", error);
+      console.error("Create meeting request error:", error);
       return res.status(500).json({
         success: false,
-        message: error.message || "Failed to create meeting"
+        message: error.message || "Failed to create meeting request"
+      });
+    }
+  }
+
+  /**
+   * Approve a meeting request (lawyer only)
+   * @param req.params.meetingId (string)
+   * @param req.body.meeting_link (string)
+   * @param req.body.notes (string) - Optional
+   */
+  static async approveMeeting(req: Request, res: Response) {
+    try {
+      const { meetingId } = req.params;
+
+
+      console.log("approveMeeting", meetingId);
+
+   
+
+      // Find the meeting and verify it belongs to this lawyer
+      const meeting = await Meeting.findOne({
+        _id: meetingId,
+        status: EMeetingStatus.pending
+      });
+
+    
+
+      // Update meeting to approved status
+      const updatedMeeting = await Meeting.findByIdAndUpdate(
+        meetingId,
+        {
+          status: EMeetingStatus.approved,
+
+          approval_date: new Date()
+        },
+        { new: true }
+      ).populate('lawyer_id', 'first_name last_name email account_type')
+       .populate('client_id', 'first_name last_name email account_type');
+
+      return res.status(200).json({
+        success: true,
+        message: "Meeting approved successfully",
+        data: updatedMeeting
+      });
+
+    } catch (error: any) {
+      console.error("Approve meeting error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to approve meeting"
+      });
+    }
+  }
+
+  /**
+   * Reject a meeting request (lawyer only)
+   * @param req.params.meetingId (string)
+   * @param req.body.rejection_reason (string)
+   */
+  static async rejectMeeting(req: Request, res: Response) {
+    try {
+      const { meetingId } = req.params;
+      const { rejection_reason } = req.body;
+      const lawyer_id = (req as any).user._id;
+
+      // Validate required fields
+      if (!rejection_reason) {
+        return res.status(400).json({
+          success: false,
+          message: "rejection_reason is required"
+        });
+      }
+
+      // Find the meeting and verify it belongs to this lawyer
+      const meeting = await Meeting.findOne({
+        _id: meetingId,
+        lawyer_id,
+        status: EMeetingStatus.pending
+      });
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: "Meeting request not found or already processed"
+        });
+      }
+
+      // Update meeting to rejected status
+      const updatedMeeting = await Meeting.findByIdAndUpdate(
+        meetingId,
+        {
+          status: EMeetingStatus.rejected,
+          rejection_reason,
+          approval_date: new Date()
+        },
+        { new: true }
+      ).populate('lawyer_id', 'first_name last_name email account_type')
+       .populate('client_id', 'first_name last_name email account_type');
+
+      return res.status(200).json({
+        success: true,
+        message: "Meeting rejected successfully",
+        data: updatedMeeting
+      });
+
+    } catch (error: any) {
+      console.error("Reject meeting error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to reject meeting"
+      });
+    }
+  }
+
+  /**
+   * Get pending meeting requests for a lawyer
+   * @param req.query.status (string) - Optional: filter by status
+   */
+  static async getPendingMeetings(req: Request, res: Response) {
+    try {
+      const lawyer_id = (req as any).user._id;
+      const { status } = req.query;
+
+      let query: any = { lawyer_id };
+      if (status) {
+        query.status = status;
+      } else {
+        query.status = EMeetingStatus.pending;
+      }
+
+      const meetings = await Meeting.find(query)
+        .populate('lawyer_id', 'first_name last_name email account_type charges')
+        .populate('client_id', 'first_name last_name email account_type')
+        .populate('created_by', 'first_name last_name email account_type')
+        .sort({ createdAt: -1 });
+
+      return res.status(200).json({
+        success: true,
+        data: meetings
+      });
+
+    } catch (error: any) {
+      console.error("Get pending meetings error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to get pending meetings"
       });
     }
   }
 
   /**
    * List all meetings for a user (lawyer or client)
-   * @param req.query.user_id (string) - Optional: filter by user (as lawyer or client)
+   * @param req.query.status (string) - Optional: filter by status
    */
   static async listMeetings(req: Request, res: Response) {
     try {
-      const { user_id } = req.query;
-      let query = {};
+      console.log("listMeetings",req.body,(req as any).user);
+      const user_id = (req as any).user.userId;
+      const { status } = req.query;
 
-      // If user_id is provided, find meetings where user is either lawyer or client
-      if (user_id) {
-        query = {
-          $or: [
-            { lawyer_id: user_id },
-            { client_id: user_id }
-          ]
-        };
+      console.log(user_id,"user_iduser_iduser_iduser_iduser_iduser_id");
+
+      let query: any = {
+        $or: [
+
+          { lawyer_id: user_id },
+          { client_id: user_id }
+        ]
+      };
+
+      if (status) {
+        query.status = status;
       }
 
       const meetings = await Meeting.find(query)
-        .populate('lawyer_id', 'first_name last_name email')
-        .populate('client_id', 'first_name last_name email')
+        .populate('lawyer_id', 'first_name last_name email account_type charges')
+        .populate('client_id', 'first_name last_name email account_type')
+        .populate('created_by', 'first_name last_name email account_type')
         .sort({ createdAt: -1 });
-
-      // Transform the response to include readable names
-      const transformedMeetings = meetings.map((meeting: any) => ({
-        _id: meeting._id,
-        lawyer_id: meeting.lawyer_id._id,
-        client_id: meeting.client_id._id,
-        lawyerName: `${meeting.lawyer_id.first_name} ${meeting.lawyer_id.last_name}`.trim(),
-        clientName: `${meeting.client_id.first_name} ${meeting.client_id.last_name}`.trim(),
-        meetingLink: meeting.meeting_link,
-        status: meeting.status,
-        createdAt: meeting.createdAt,
-        updatedAt: meeting.updatedAt
-      }));
 
       return res.status(200).json({
         success: true,
-        meetings: transformedMeetings
+        data: meetings
       });
 
     } catch (error: any) {
@@ -120,38 +302,23 @@ export default class MeetingController {
   }
 
   /**
-   * Update meeting status
-   * @param req.params.id (string) - Meeting ID
-   * @param req.body.status (string) - New status
+   * Get a specific meeting by ID
+   * @param req.params.meetingId (string)
    */
-  static async updateMeetingStatus(req: Request, res: Response) {
+  static async getMeeting(req: Request, res: Response) {
     try {
-      const { meetingId } = req.body;
-      const { status } = req.body;
+      const { meetingId } = req.params;
+      const user_id = (req as any).user.userId || (req as any).user._id;
 
-      // Validate meeting ID
-      if (!meetingId) {
-        return res.status(400).json({
-          success: false,
-          message: "Meeting ID is required"
-        });
-      }
-
-      // Validate status
-      if (!status || !Object.values(EMeetingStatus).includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid status. Must be one of: ${Object.values(EMeetingStatus).join(', ')}`
-        });
-      }
-
-      // Find and update the meeting
-      const meeting = await Meeting.findByIdAndUpdate(
-        meetingId,
-        { status },
-        { new: true }
-      ).populate('lawyer_id', 'first_name last_name email')
-       .populate('client_id', 'first_name last_name email');
+      // Find meeting where user is either lawyer or client
+      const meeting = await Meeting.findOne({
+        _id: meetingId,
+        $or: [
+          { lawyer_id: user_id },
+          { client_id: user_id }
+        ]
+      }).populate('lawyer_id', 'first_name last_name email account_type')
+       .populate('client_id', 'first_name last_name email account_type');
 
       if (!meeting) {
         return res.status(404).json({
@@ -160,23 +327,78 @@ export default class MeetingController {
         });
       }
 
-      // Transform the response
-      const transformedMeeting = {
-        _id: meeting._id,
-        lawyer_id: (meeting.lawyer_id as any)._id,
-        client_id: (meeting.client_id as any)._id,
-        lawyerName: `${(meeting.lawyer_id as any).first_name} ${(meeting.lawyer_id as any).last_name}`.trim(),
-        clientName: `${(meeting.client_id as any).first_name} ${(meeting.client_id as any).last_name}`.trim(),
-        meetingLink: meeting.meeting_link,
-        status: meeting.status,
-        createdAt: meeting.createdAt,
-        updatedAt: meeting.updatedAt
-      };
+      return res.status(200).json({
+        success: true,
+        data: meeting
+      });
+
+    } catch (error: any) {
+      console.error("Get meeting error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to get meeting"
+      });
+    }
+  }
+
+  /**
+   * Update meeting status (for active, completed, cancelled)
+   * @param req.params.meetingId (string)
+   * @param req.body.status (string)
+   */
+  static async updateMeetingStatus(req: Request, res: Response) {
+    try {
+      // Get meetingId from params or body for flexibility
+      const meetingId = req.params.meetingId || req.body.meetingId;
+      const { status } = req.body;
+      const user_id = (req as any).user.userId || (req as any).user._id;
+
+      // Validate meetingId
+      if (!meetingId) {
+        return res.status(400).json({
+          success: false,
+          message: "Meeting ID is required"
+        });
+      }
+
+      // Validate status
+      const allowedStatuses = [EMeetingStatus.active, EMeetingStatus.completed, EMeetingStatus.cancelled];
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid status. Allowed: active, completed, cancelled"
+        });
+      }
+
+      // Find meeting where user is either lawyer or client
+      const meeting = await Meeting.findOne({
+        _id: meetingId,
+        $or: [
+          { lawyer_id: user_id },
+          { client_id: user_id }
+        ]
+      });
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: "Meeting not found"
+        });
+      }
+
+ 
+
+      const updatedMeeting = await Meeting.findByIdAndUpdate(
+        meetingId,
+        { status },
+        { new: true }
+      ).populate('lawyer_id', 'first_name last_name email account_type')
+       .populate('client_id', 'first_name last_name email account_type');
 
       return res.status(200).json({
         success: true,
         message: "Meeting status updated successfully",
-        meeting: transformedMeeting
+        data: updatedMeeting
       });
 
     } catch (error: any) {

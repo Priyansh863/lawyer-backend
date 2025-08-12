@@ -1,6 +1,7 @@
 import express from "express";
 import UserController from "../controllers/UserController";
 import Auth from "../middlewares/auth"; // Add this import
+import { authenticateToken } from "../middleware/auth";
 
 const userRoute = express.Router();
 
@@ -37,5 +38,12 @@ userRoute.get("/blogs/:id", UserController.getBlogById);
 userRoute.post("/blogs", UserController.createBlog);
 userRoute.put("/blogs/:id", UserController.updateBlog);
 userRoute.delete("/blogs/:id", UserController.deleteBlog);
+
+// NEW: Client notes routes (lawyer only)
+userRoute.put("/client/:clientId/notes", authenticateToken, UserController.updateClientNotes);
+userRoute.get("/client/:clientId/notes", authenticateToken, UserController.getClientNotes);
+
+userRoute.get("/lawyers", UserController.getLawyers);
+
 
 export default userRoute;
