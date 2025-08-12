@@ -288,7 +288,7 @@ PostSchema.pre('save', function(next) {
 // Instance methods
 PostSchema.methods.generateCustomUrl = function(): string {
   // Use frontend URL for custom URLs
-  const frontendUrl = process.env.FRONTEND_URL || process.env.frontendUrl || 'http://localhost:3000';
+  const frontendUrl = process.env.FRONTEND_URL || process.env.frontendUrl || 'https://lawgg.net';
   const params = new URLSearchParams();
   
   // Always add post ID

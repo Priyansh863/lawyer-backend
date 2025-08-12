@@ -75,7 +75,7 @@ SecureLinkSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });
 
 // Instance Methods
 SecureLinkSchema.methods.generateSecureUrl = function(): string {
-  const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const baseUrl = process.env.FRONTEND_URL || 'https://lawgg.net';
   return `${baseUrl}/secure-upload/${this.link_token}`;
 };
 
