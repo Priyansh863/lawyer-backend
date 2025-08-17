@@ -85,7 +85,6 @@ const CaseSchema: Schema = new Schema(
     },
     status: { 
       type: String, 
-      enum: Object.values(CaseStatus),
       required: true,
       default: CaseStatus.PENDING,
       index: true
