@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
-import Meeting, { EMeetingStatus } from "../models/meeting";
+import Meeting, { EMeetingStatus, EMeetingType } from "../models/meeting";
 import { User } from "../models/user";
+import Case from "../models/case";
 import mongoose from 'mongoose';
 
 // Interface for populated user fields
@@ -19,15 +20,24 @@ interface PopulatedMeeting {
   client_id: PopulatedUser;
   meeting_title: string;
   meeting_description?: string;
-  requested_date: Date;
-  requested_time: string;
+  meeting_type: EMeetingType;
+  start_time: Date;
+  end_time: Date;
+  duration_minutes: number;
+  timezone: string;
   meeting_link?: string;
-  status: string;
-  approval_date?: Date;
+  location?: string;
+  status: EMeetingStatus;
+  initiated_by: 'lawyer' | 'client';
+  approved_by?: PopulatedUser;
+  approved_at?: Date;
   rejection_reason?: string;
+  cancellation_reason?: string;
   notes?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  case_id?: string;
+  agenda_items?: string[];
+  created_at: Date;
+  updated_at: Date;
 }
 
 export default class MeetingController {
@@ -56,19 +66,19 @@ export default class MeetingController {
 
  
       // Determine meeting status based on who creates it
-      let status = EMeetingStatus.pending;
+      let status = EMeetingStatus.PENDING_APPROVAL;
       let approval_date = null;
       
       // If lawyer creates the meeting, it's auto-approved
       if (user.account_type === 'lawyer') {
         // Lawyer can create meetings with any client
-        status = EMeetingStatus.approved;
+        status = EMeetingStatus.APPROVED;
         approval_date = new Date();
       }
       // If client creates the meeting, it needs lawyer approval
       else if (user.account_type === 'client') {
         // Client can create meetings with any lawyer
-        status = EMeetingStatus.pending;
+        status = EMeetingStatus.PENDING_APPROVAL;
       }
      
 
@@ -92,7 +102,7 @@ export default class MeetingController {
         .populate('client_id', 'first_name last_name email account_type')
         .populate('created_by', 'first_name last_name email account_type');
 
-      const message = status === EMeetingStatus.approved 
+      const message = status === EMeetingStatus.APPROVED 
         ? "Meeting created and approved successfully" 
         : "Meeting request created successfully and sent for approval";
 
@@ -129,7 +139,7 @@ export default class MeetingController {
       // Find the meeting and verify it belongs to this lawyer
       const meeting = await Meeting.findOne({
         _id: meetingId,
-        status: EMeetingStatus.pending
+        status: EMeetingStatus.PENDING_APPROVAL
       });
 
     
@@ -138,7 +148,7 @@ export default class MeetingController {
       const updatedMeeting = await Meeting.findByIdAndUpdate(
         meetingId,
         {
-          status: EMeetingStatus.approved,
+          status: EMeetingStatus.APPROVED,
 
           approval_date: new Date()
         },
@@ -180,12 +190,13 @@ export default class MeetingController {
         });
       }
 
+      let query: any = {
+        lawyer_id: lawyer_id,
+        status: EMeetingStatus.PENDING_APPROVAL
+      };
+
       // Find the meeting and verify it belongs to this lawyer
-      const meeting = await Meeting.findOne({
-        _id: meetingId,
-        lawyer_id,
-        status: EMeetingStatus.pending
-      });
+      const meeting = await Meeting.findOne(query);
 
       if (!meeting) {
         return res.status(404).json({
@@ -197,10 +208,9 @@ export default class MeetingController {
       // Update meeting to rejected status
       const updatedMeeting = await Meeting.findByIdAndUpdate(
         meetingId,
-        {
-          status: EMeetingStatus.rejected,
-          rejection_reason,
-          approval_date: new Date()
+        { 
+          status: EMeetingStatus.REJECTED,
+          rejection_reason: rejection_reason || 'No reason provided'
         },
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type')
@@ -234,7 +244,7 @@ export default class MeetingController {
       if (status) {
         query.status = status;
       } else {
-        query.status = EMeetingStatus.pending;
+        query.status = EMeetingStatus.PENDING_APPROVAL;
       }
 
       const meetings = await Meeting.find(query)
@@ -362,7 +372,7 @@ export default class MeetingController {
       }
 
       // Validate status
-      const allowedStatuses = [EMeetingStatus.active, EMeetingStatus.completed, EMeetingStatus.cancelled];
+      const allowedStatuses = [EMeetingStatus.ACTIVE, EMeetingStatus.COMPLETED, EMeetingStatus.CANCELLED];
       if (!allowedStatuses.includes(status)) {
         return res.status(400).json({
           success: false,

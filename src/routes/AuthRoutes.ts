@@ -31,9 +31,9 @@ authRoutes.post("/login", loginValidation, HandleErrors(login));
 
 authRoutes.post("/signup", HandleErrors(signup));
 
-authRoutes.patch("/reset-password", resetPasswordValidation, HandleErrors(resetPassword));
+authRoutes.patch("/reset-password", HandleErrors(resetPassword));
 
-authRoutes.post("/forgot-password", forgotPasswordValidation, HandleErrors(forgotPassword));
+authRoutes.post("/forgot-password", HandleErrors(forgotPassword));
 
 authRoutes.post("/apple-login", HandleErrors(appleLogin));
 

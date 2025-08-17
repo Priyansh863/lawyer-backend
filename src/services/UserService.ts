@@ -84,7 +84,7 @@ class UserService {
   async getUserList(accountType, offset, limit) {
     try {
       const query = accountType ? { account_type: accountType } : {};
-      const users = await User.find(query).skip(offset).limit(limit);
+      const users = await User.find(query)
       return users;
     } catch (error) {
       throw new Error(error.message);
@@ -125,6 +125,8 @@ class UserService {
   limit?: number;
 }) {
   let filter: any = {};
+
+  console.log("filter >>>", filter);
 
   // Filter by user role
   if (role === "client") {

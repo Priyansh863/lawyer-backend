@@ -22,9 +22,8 @@ class QuestionService {
     try {
       // Process tags if they exist as a comma-separated string
       let tags: string[] = [];
-      if (data.tags) {
-        tags = data.tags.split(',').map(tag => tag.trim()).filter(Boolean);
-      }
+      console.log(data,"datadatadatadatadatadatadata");
+    
 
       // Create new question
       const newQuestion = await Question.create({
@@ -32,7 +31,7 @@ class QuestionService {
         clientName: data.isAnonymous ? undefined : data.clientName,
         isAnonymous: data.isAnonymous,
         category: data.category,
-        tags: tags,
+        tags: data.tags,
         clientId: new mongoose.Types.ObjectId(data.clientId),
         status: "pending",
         // answer field is null by default as defined in the schema

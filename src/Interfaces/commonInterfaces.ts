@@ -243,7 +243,7 @@ export interface IforgotPassword {
 // Reset password interface
 export interface IresetPassword {
   email: string;
-  password: string;
+  newPassword: string;
 }
 
 export interface IupdatePassword {

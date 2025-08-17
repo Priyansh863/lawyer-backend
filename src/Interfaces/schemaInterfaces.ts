@@ -33,6 +33,10 @@ export interface IUserSchema {
   otp_expires?: Date;
   notes?: string;
   updated_at?: Date;
+  charges?: number;
+  experience?: string;
+  pratice_area?: string;
+  created_at?: Date;
 }
 
 // Admin Schema interface

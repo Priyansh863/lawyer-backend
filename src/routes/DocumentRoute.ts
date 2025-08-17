@@ -1,5 +1,6 @@
 import { Router } from "express";
 import DocumentController from "../controllers/DocumentController";
+import Auth from "../middlewares/auth";
 
 const router = Router();
 
@@ -16,7 +17,7 @@ router.post("/upload-with-ai", DocumentController.uploadDocumentWithAI);
 router.post("/upload-with-summary", DocumentController.uploadDocumentWithSummary);
 
 // GET /api/v1/document/list
-router.get("/list", DocumentController.listDocuments);
+router.get("/list", Auth,DocumentController.listDocuments);
 
 // POST /api/v1/document/accessible - Get documents accessible by current user (own + shared)
 router.post("/accessible", DocumentController.getAccessibleDocuments);
@@ -49,5 +50,11 @@ router.post("/lawyers-for-sharing", DocumentController.getLawyersForSharing);
 
 // POST /api/v1/document/:documentId/sharing-details - Get document sharing details
 router.post("/:documentId/sharing-details", DocumentController.getDocumentSharingDetails);
+
+router.post("/users-for-sharing", DocumentController.getUsersForSharing);
+
+// Add this line in DocumentRoute.ts after line 26:
+router.get("/case/:caseId", DocumentController.getCaseDocuments);
+
 
 export default router;

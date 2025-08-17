@@ -32,7 +32,7 @@ let socketService: SocketService;
 // }));
 app.use(cors({
   origin: "*", // Allow all origins for development; restrict in production
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true, // Set to true if you need to allow cookies or HTTP authentication
 }));
@@ -55,6 +55,7 @@ import paymentRoute from "./routes/PaymentRoute";
 import contentMonitoringRoute from "./routes/ContentMonitoringRoute";
 import policyRoute from "./routes/PolicyRoute";
 import caseRoute from "./routes/CaseRoute";
+import userChargesRoute from "./routes/UserChargesRoute";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/meeting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
@@ -72,6 +73,7 @@ app.use("/api/v1/case", caseRoute);
 app.use("/api/v1/stripe", stripeRoute);
 app.use("/api/v1/token", tokenRoute);
 app.use("/api/v1/secure-link", secureLinkRoute);
+app.use("/api/v1/charges", userChargesRoute);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

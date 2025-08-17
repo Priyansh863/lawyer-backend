@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import {User} from "../models/user";
 import Blog from "../models/blog";
 import Case from "../models/case";
+import bcrypt from 'bcrypt';
 
 class UserController {
   static async updateUser(req: Request, res: Response) {
@@ -64,7 +65,7 @@ class UserController {
         limit?: string;
       };
 
-      console.log("converting page and limit to numbers >>>");
+      console.log("converting page and limit to numbers >>>",status);
       const pageNumber = Number(page);
       const pageLimit = Number(limit);
 
@@ -72,7 +73,7 @@ class UserController {
       const cases = await UserService.getCasesByUserRole({
         userId,
         role,
-        status: (status && status[0].toUpperCase() + status.slice(1).toLowerCase()) || undefined,
+        status: (status) || undefined,
         query: (query && query[0].toUpperCase() + query.slice(1).toLowerCase()) || undefined,
         page: pageNumber,
         limit: pageLimit,
@@ -127,13 +128,105 @@ class UserController {
         return res.status(403).json({ success: false, message: "Unauthorized" });
       }
 
-      const caseData = req.body;
-      const newCase = await UserService.createCase({ ...caseData, createdBy: userId });
+      const {
+        title,
+        description,
+        case_type,
+        court_type,
+        client_option,
+        existing_client_id,
+        client_first_name,
+        client_last_name,
+        client_email,
+        client_phone,
+        client_password,
+        priority,
+        expected_duration,
+        notes,
+        lawyer_id,
+        status
+      } = req.body;
+
+      // Validate required fields
+      if (!title || !description || !case_type || !court_type) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Missing required fields: title, description, case_type, court_type" 
+        });
+      }
+
+      let clientId = existing_client_id;
+
+      // Create new client if needed
+      if (client_option === 'new') {
+        if (!client_first_name || !client_last_name || !client_email || !client_password) {
+          return res.status(400).json({ 
+            success: false, 
+            message: "Missing required client fields for new client creation" 
+          });
+        }
+
+        // Hash password before creating new client
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(client_password, saltRounds);
+
+        // Create new client
+        const newClient = new User({
+          first_name: client_first_name,
+          last_name: client_last_name,
+          email: client_email,
+          phone: client_phone,
+          password: hashedPassword,
+          account_type: 'client',
+          is_verified: true
+        });
+
+        const savedClient = await newClient.save();
+        clientId = savedClient._id;
+      }
+
+      if (!clientId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Client ID is required" 
+        });
+      }
+
+      // Generate unique case number
+      const caseCount = await Case.countDocuments();
+      const caseNumber = `CASE-${Date.now()}-${(caseCount + 1).toString().padStart(4, '0')}`;
+
+      // Create case with all required fields
+      const caseData = {
+        case_number: caseNumber,
+        title,
+        description,
+        summary: description, // Use description as summary for now
+        case_type,
+        court_type,
+        client_id: clientId,
+        lawyer_id: lawyer_id || userId,
+        status: status || 'open',
+        key_points: notes ? [notes] : [],
+        important_dates: [],
+        documents: [],
+        status_history: [{
+          status: status || 'open',
+          changed_at: new Date(),
+          changed_by: userId,
+          notes: 'Case created'
+        }]
+      };
+
+      const newCase = await Case.create(caseData);
 
       return res.status(201).json({ success: true, case: newCase });
     } catch (error) {
       console.error("Error creating case:", error);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      return res.status(500).json({ 
+        success: false, 
+        message: error.message || "Internal server error" 
+      });
     }
   }
 
@@ -333,6 +426,33 @@ static async getLawyers(req: Request, res: Response) {
     });
   }
 }
+
+  /**
+   * Get all clients for sharing documents (lawyer only)
+   */
+  static async getClientsList(req: Request, res: Response) {
+    try {
+      const lawyer = (req as any).user;
+      
+
+
+      const clients = await User.find(
+        { account_type: 'client' },
+        'first_name last_name email account_type'
+      ).sort({ first_name: 1 });
+
+      res.json({
+        success: true,
+        clients: clients
+      });
+    } catch (error: any) {
+      console.error('Error fetching clients:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch clients'
+      });
+    }
+  }
 }
 
 export default UserController;

@@ -231,6 +231,7 @@ class AuthServices {
             email: userData.email,
             otp_expires: otpExpires,
             token,
+            otp: otp, // Include OTP for development (since email service may not be working)
           },
         };
       } else {
@@ -298,10 +299,12 @@ class AuthServices {
 
       this.response = {
         success: true,
-        message: 'otp_resent',
+        message: 'otp_sent_successfully',
         data: {
           email: email,
-          otp_expires: otpExpires
+          otp_expires: otpExpires,
+          otp: otp, // Include OTP for development (since email service may not be working)
+          message: `Your verification OTP is: ${otp}. This OTP will expire in 10 minutes.`
         }
       };
     } catch (error) {
@@ -417,10 +420,10 @@ class AuthServices {
    * Reset password
    */
   async resetPassword(data: IresetPassword) {
-    const { email, password } = data;
+    const { email, newPassword } = data;
     const users = await User.findOne({ email: email });
     if (users) {
-      const encryptedNewPassword = await bcrypt.hash(password, 8);
+      const encryptedNewPassword = await bcrypt.hash(newPassword, 8);
       const query = { $set: { password: encryptedNewPassword } };
       await User.updateOne({ email: email }, query);
       this.response = {
@@ -453,15 +456,34 @@ class AuthServices {
           email,
           type: "forgot-password-otp",
         });
-        const dbData =
-          (await dbConfig.secretManagerConnection()) as ISecretManagerData;
+        
+        const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
         const encryptedOtp = enc.Base64.stringify(
           HmacSHA256(otp?.toString(), dbData.cryptoKey)
         );
-        const info = Object.assign({ encOtp: encryptedOtp });
+        
+        // Store OTP in user record for verification
+        await User.updateOne(
+          { email: email.toLowerCase() },
+          { 
+            $set: { 
+              otp: encryptedOtp,
+              otp_expires: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
+            }
+          }
+        );
+        
+        const info = {
+          encOtp: encryptedOtp,
+          otp: otp, // Include OTP for development (since SendGrid is not working)
+          email: email,
+          otp_expires: new Date(Date.now() + 10 * 60 * 1000),
+          message: `Your password reset OTP is: ${otp}. This OTP will expire in 10 minutes.`
+        };
+        
         this.response = {
           success: true,
-          message: "email_sent",
+          message: "otp_sent_successfully",
           data: info,
         };
       } else {
@@ -920,6 +942,101 @@ class AuthServices {
           error: error.message
         }
       };
+    }
+  }
+
+  /**
+   * Create Client by Lawyer - Client Onboarding
+   */
+  async createClientByLawyer(data: {
+    lawyer_id: string;
+    client_first_name: string;
+    client_last_name?: string;
+    client_email: string;
+    client_password: string;
+    client_phone?: string;
+  }) {
+    try {
+      const { lawyer_id, client_first_name, client_last_name, client_email, client_password, client_phone } = data;
+
+      // Check if lawyer exists
+      const lawyer = await User.findById(lawyer_id);
+      if (!lawyer || lawyer.account_type !== 'lawyer') {
+        this.response = {
+          success: false,
+          message: "Invalid lawyer ID or lawyer not found"
+        };
+        return this.response;
+      }
+
+      // Check if client email already exists
+      const existingClient = await User.findOne({ email: client_email.toLowerCase() });
+      if (existingClient) {
+        this.response = {
+          success: false,
+          message: "Client with this email already exists"
+        };
+        return this.response;
+      }
+
+      // Get database configuration for password hashing
+      const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+      
+      // Hash the password
+      const hashedPassword = enc.Base64.stringify(
+        HmacSHA256(client_password, dbData.cryptoKey)
+      );
+
+      // Create new client
+      const newClient = new User({
+        first_name: client_first_name,
+        last_name: client_last_name || "",
+        email: client_email.toLowerCase(),
+        password: hashedPassword,
+        phone: client_phone || "",
+        account_type: 'client',
+        is_active: 1,
+        is_verified: 1, // Auto-verify clients created by lawyers
+        is_profile_completed: 1,
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+
+      const savedClient = await newClient.save();
+
+      // Generate JWT token for the new client
+      const token = jwt.sign(
+        { 
+          _id: savedClient._id, 
+          email: savedClient.email, 
+          account_type: savedClient.account_type 
+        },
+        dbData.jwtSecretKey as string,
+        { expiresIn: "1y" }
+      );
+
+      // Remove password from response
+      const clientData = savedClient.toObject();
+      delete clientData.password;
+
+      this.response = {
+        success: true,
+        message: "Client created successfully",
+        data: {
+          client: clientData,
+          token: token,
+          created_by_lawyer: lawyer_id
+        }
+      };
+
+      return this.response;
+    } catch (error: any) {
+      console.error('Error creating client:', error);
+      this.response = {
+        success: false,
+        message: error.message || "Failed to create client"
+      };
+      return this.response;
     }
   }
 

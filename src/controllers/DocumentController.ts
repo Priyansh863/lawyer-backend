@@ -1,10 +1,13 @@
 import { Request, Response } from "express";
 import { uploadImg } from "../utils/fileUpload";
-import UserDocument, { DocumentPrivacy, DocumentStatus } from "../models/user_documents";
+import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
 import path from "path";
 import { User } from "../models/user";
+import Case from "../models/case";
+import mongoose from "mongoose";
+import { EMeetingStatus } from "../models/meeting";
 
 export default class DocumentController {
   /**
@@ -16,18 +19,35 @@ export default class DocumentController {
    */
   static async uploadDocumentEnhanced(req: Request, res: Response) {
     try {
-      const { userId, fileUrl, fileName, fileType } = req.body;
+      const { 
+        user_id, 
+        link, 
+        document_name, 
+        file_type, 
+        privacy, 
+        process_with_ai,
+        file_size,
+        case_id 
+      } = req.body;
       
       // Validate required fields
-      if (!userId || !fileUrl || !fileName) {
+      if (!user_id || !link || !document_name) {
         return res.status(400).json({
           success: false,
-          message: "Missing required fields: userId, fileUrl, fileName"
+          message: "Missing required fields: user_id, link, document_name"
+        });
+      }
+      
+      // Validate case_id logic: only private documents can have case_id
+      if (case_id && privacy !== DocumentPrivacy.PRIVATE) {
+        return res.status(400).json({
+          success: false,
+          message: "Case ID can only be assigned to private documents"
         });
       }
       
       // Get file extension and determine file type
-      const fileExtension = path.extname(fileName).toLowerCase();
+      const fileExtension = path.extname(document_name).toLowerCase();
   
       
       // Determine file type display name
@@ -40,19 +60,30 @@ export default class DocumentController {
         fileTypeDisplay = 'Video';
       }
       
-      // Save to MongoDB
-      const doc = await UserDocument.create({
-        document_name: fileName,
+      // Prepare document data
+      const documentData: any = {
+        document_name: document_name,
         status: "Pending",
-        uploaded_by: userId,
-        link: fileUrl,
-        file_type: fileTypeDisplay
-      });
+        uploaded_by: user_id,
+        link: link,
+        file_type: file_type || fileTypeDisplay,
+        document_type: 'general', // Always general, no user selection
+        privacy: privacy || 'public',
+        file_size: file_size
+      };
+      
+      // Only add case_id if privacy is private and case_id is provided
+      if (privacy === DocumentPrivacy.PRIVATE && case_id) {
+        documentData.case_id = case_id;
+      }
+      
+      // Save to MongoDB
+      const doc = await UserDocument.create(documentData);
 
       console.log(`Processing ${fileTypeDisplay} document: ${doc._id}`);
       
-      // Process document with AI service (only for PDFs for now)
-      if (fileName) {
+      // Process document with AI service if requested
+      if (process_with_ai && document_name) {
         try {
           const aiResult = await AIService.processDocument(doc._id.toString());
           
@@ -83,7 +114,14 @@ export default class DocumentController {
             aiError: aiError.message
           });
         }
-      } 
+      } else {
+        // Return success for non-AI uploads
+        return res.status(200).json({
+          success: true,
+          message: `${fileTypeDisplay} uploaded successfully`,
+          document: doc
+        });
+      }
     } catch (error: any) {
       console.error("Enhanced upload document error:", error);
       return res.status(500).json({
@@ -153,9 +191,15 @@ export default class DocumentController {
   /**
    * Lists all documents from the database
    */
-  static async listDocuments(req: Request, res: Response) {
+  static async listDocuments(req: any, res: Response) {
     try {
-      const documents = await UserDocument.find().sort({ _id: -1 });
+      // Fetch user's own documents AND all public documents from other users
+      const documents = await UserDocument.find({
+        $or: [
+          { uploaded_by: req.id }, // User's own documents
+          { privacy: DocumentPrivacy.PUBLIC } // All public documents
+        ]
+      }).sort({ _id: -1 });
       return res.status(200).json({ success: true, documents });
     } catch (error: any) {
       console.error("List documents error:", error);
@@ -168,22 +212,58 @@ export default class DocumentController {
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
    * @param req.body.userId (string)
-   * @param req.body.privacy (string, 'public' or 'private')
+   * @param req.body.privacy (string, 'public', 'private', or 'fully_private')
+   * @param req.body.selectedUsers (array, required if privacy is 'private')
    * @param req.body.processWithAI (boolean, optional)
    * @param req.body.fileSize (number, optional)
    * @param req.body.fileType (string, optional)
+   * @param req.body.isSecureLink (boolean, optional - for secure link uploads)
    */
   static async uploadDocumentWithAI(req: Request, res: Response) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
     try {
       const { 
         userId, 
         fileUrl, 
         fileName, 
-        privacy = DocumentPrivacy.PUBLIC, 
+        privacy = DocumentPrivacy.PRIVATE, // Default to private for security
+        selectedUsers = [],
         processWithAI = false,
         fileSize,
-        fileType
+        fileType,
+        isSecureLink = false,
+        documentType = DocumentType.GENERAL,
+        caseId,
+        description = ''
       } = req.body;
+
+      // Validate case association if document is case-related
+      if (documentType === DocumentType.CASE_RELATED && !caseId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Case ID is required for case-related documents" 
+        });
+      }
+
+      // Verify case exists and user has access to it
+      if (caseId) {
+        const caseExists = await Case.findOne({
+          _id: caseId,
+          $or: [
+            { client_id: userId },
+            { lawyer_id: userId }
+          ]
+        }).session(session);
+
+        if (!caseExists) {
+          return res.status(404).json({ 
+            success: false, 
+            message: "Case not found or access denied" 
+          });
+        }
+      }
       
       // Get user to check role
       const user = await User.findById(userId);
@@ -191,16 +271,24 @@ export default class DocumentController {
         return res.status(404).json({ success: false, message: "User not found" });
       }
       
-      // Lawyers can only upload public documents
-      if (user.account_type === 'lawyer' && privacy === DocumentPrivacy.PRIVATE) {
-        return res.status(403).json({ 
+      // Validation for privacy options
+      if (privacy === DocumentPrivacy.PRIVATE && selectedUsers.length === 0) {
+        return res.status(400).json({ 
           success: false, 
-          message: "Lawyers can only upload public documents" 
+          message: "Private documents must have at least one selected user" 
         });
       }
       
-      // Save to MongoDB
-      const doc = await UserDocument.create({
+      // Both lawyers and clients can upload all document types (removed restriction)
+      
+      // Prepare shared_with array based on privacy setting
+      let sharedWith = [];
+      if (privacy === DocumentPrivacy.PRIVATE) {
+        sharedWith = selectedUsers;
+      }
+      
+      // Save to MongoDB within transaction
+      const doc = await UserDocument.create([{
         document_name: fileName,
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
@@ -208,39 +296,60 @@ export default class DocumentController {
         privacy,
         file_size: fileSize,
         file_type: fileType,
-        shared_with: []
-      });
+        document_type: documentType,
+        case_id: caseId,
+        description,
+        shared_with: sharedWith,
+        is_secure_link: isSecureLink || false
+      }], { session });
+
+      const savedDoc = doc[0];
+
+      // If document is case-related, update the case's documents array
+      if (documentType === DocumentType.CASE_RELATED && caseId) {
+        await Case.findByIdAndUpdate(
+          caseId,
+          { $push: { documents: savedDoc._id } },
+          { session, new: true }
+        );
+      }
+
+      // Commit transaction if everything is successful
+      await session.commitTransaction();
+      session.endSession();
 
       // If AI processing is requested and file is PDF
       if (processWithAI && isPDFFile(fileName)) {
-        console.log(`Triggering AI processing for document: ${doc._id}`);
+        console.log(`Triggering AI processing for document: ${savedDoc._id}`);
         
         // Process asynchronously (don't wait for completion)
-        AIService.processDocument(doc._id.toString())
+        AIService.processDocument(savedDoc._id.toString())
           .then(result => {
-            console.log(`AI processing completed for ${doc._id}:`, result.message);
+            console.log(`AI processing completed for ${savedDoc._id}:`, result.message);
           })
           .catch(error => {
-            console.error(`AI processing failed for ${doc._id}:`, error.message);
+            console.error(`AI processing failed for ${savedDoc._id}:`, error.message);
           });
-        
-        return res.status(200).json({ 
-          success: true, 
-          fileUrl, 
-          document: doc,
-          message: "Document uploaded and AI processing started"
-        });
       } else if (processWithAI && !isPDFFile(fileName)) {
-        return res.status(400).json({
-          success: false,
-          message: "AI processing is only available for PDF files"
-        });
+        console.warn(`AI processing requested for non-PDF file: ${fileName}`);
       }
 
-      return res.status(200).json({ success: true, fileUrl, document: doc });
+      return res.status(200).json({ 
+        success: true, 
+        fileUrl, 
+        document: savedDoc,
+        message: "Document uploaded successfully" + (processWithAI && isPDFFile(fileName) ? 
+                 ". AI processing started in background." : "") 
+      });
     } catch (error: any) {
+      await session.abortTransaction();
+      session.endSession();
       console.error("Document upload with AI error:", error);
-      return res.status(500).json({ success: false, message: error.message || "Failed to upload document" });
+      return res.status(500).json({ 
+        success: false, 
+        message: error.message || "Failed to upload document",
+        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   }
 
@@ -319,12 +428,17 @@ export default class DocumentController {
     try {
       const { clientId } = req.params;
       const { status } = req.query;
+      const userObjectId = new mongoose.Types.ObjectId(clientId);
 
-      const query: any = { uploaded_by: clientId };
+      const query: any = { uploaded_by: userObjectId };
+
+      
       
       if (status && status !== 'all') {
         query.status = status;
       }
+
+      console.log("queryqueryquery", clientId,query,"queryqueryqueryqueryquery");
       
       const documents = await UserDocument.find(query)
         .populate('uploaded_by', 'first_name last_name email')
@@ -339,6 +453,39 @@ export default class DocumentController {
       res.status(500).json({
         success: false,
         message: error.message || 'Failed to fetch client documents'
+      });
+    }
+  }
+
+  /**
+   * Get documents for a specific case
+   */
+  static async getCaseDocuments(req: Request, res: Response) {
+    try {
+      const { caseId } = req.params;
+      const { status } = req.query;
+
+      const query: any = { case_id: caseId };
+      
+      if (status && status !== 'all') {
+        query.status = status;
+      }
+      
+      const documents = await UserDocument.find(query)
+        .populate('uploaded_by', 'first_name last_name email account_type')
+        .populate('shared_with', 'first_name last_name email account_type')
+        .sort({ created_at: -1 });
+
+      res.json({
+        success: true,
+        documents: documents,
+        total: documents.length
+      });
+    } catch (error: any) {
+      console.error('Error fetching case documents:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch case documents'
       });
     }
   }
@@ -470,8 +617,10 @@ export default class DocumentController {
         $or: [
           // User's own documents
           { uploaded_by: userId },
-          // Documents shared with this user (if lawyer)
-          ...(user.account_type === 'lawyer' ? [{ shared_with: userId }] : [])
+          // Documents shared with this user
+          { shared_with: userId },
+          // Public documents (visible to all users)
+          { privacy: DocumentPrivacy.PUBLIC }
         ]
       };
 
@@ -520,19 +669,19 @@ export default class DocumentController {
   }
 
   /**
-   * Share a private document with specific lawyers
-   * Only document owner (client) can share their private documents
+   * Share a private document with specific users (lawyers or clients)
+   * Both lawyers and clients can share their private documents
    */
   static async shareDocument(req: Request, res: Response) {
     try {
       const { documentId } = req.params;
-      const { userId, lawyerIds } = req.body;
+      const { userId, userIds } = req.body;
 
       // Validate input
-      if (!lawyerIds || !Array.isArray(lawyerIds) || lawyerIds.length === 0) {
+      if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Please provide lawyer IDs to share with'
+          message: 'Please provide user IDs to share with'
         });
       }
 
@@ -557,27 +706,27 @@ export default class DocumentController {
       if (document.privacy !== DocumentPrivacy.PRIVATE) {
         return res.status(400).json({
           success: false,
-          message: 'Only private documents can be shared with lawyers'
+          message: 'Only private documents can be shared with other users'
         });
       }
 
-      // Verify all provided IDs are lawyers
-      const lawyers = await User.find({
-        _id: { $in: lawyerIds },
-        account_type: 'lawyer'
+      // Verify all provided IDs are valid users (lawyers or clients)
+      const users = await User.find({
+        _id: { $in: userIds },
+        account_type: { $in: ['lawyer', 'client'] }
       });
 
-      if (lawyers.length !== lawyerIds.length) {
+      if (users.length !== userIds.length) {
         return res.status(400).json({
           success: false,
-          message: 'Some provided IDs are not valid lawyers'
+          message: 'Some provided IDs are not valid users'
         });
       }
 
-      // Share document with lawyers
+      // Share document with users
       const updatedDocument = await UserDocument.findByIdAndUpdate(
         documentId,
-        { $addToSet: { shared_with: { $each: lawyerIds } } },
+        { $addToSet: { shared_with: { $each: userIds } } },
         { new: true }
       ).populate('shared_with', 'first_name last_name email account_type');
 
@@ -683,13 +832,13 @@ export default class DocumentController {
         return res.status(404).json({ success: false, message: "User not found" });
       }
 
-      // Lawyers cannot set documents to private
-      if (user.account_type === 'lawyer' && privacy === DocumentPrivacy.PRIVATE) {
-        return res.status(403).json({
-          success: false,
-          message: 'Lawyers cannot create private documents'
-        });
-      }
+      // Both lawyers and clients can set documents to any privacy level (removed restriction)
+      // if (user.account_type === 'lawyer' && privacy === DocumentPrivacy.PRIVATE) {
+      //   return res.status(403).json({
+      //     success: false,
+      //     message: 'Lawyers cannot create private documents'
+      //   });
+      // }
 
       // If changing from private to public, clear shared_with array
       const updateData: any = { privacy };
@@ -756,6 +905,47 @@ export default class DocumentController {
       return res.status(500).json({
         success: false,
         message: error.message || 'Failed to get lawyers'
+      });
+    }
+  }
+
+  /**
+   * Get all users for document sharing (lawyers and clients)
+   * Used for the unified document privacy selection
+   */
+  static async getUsersForSharing(req: Request, res: Response) {
+    try {
+      const { userId } = req.body;
+
+      // Get current user to check role
+      const currentUser = await User.findById(userId);
+      if (!currentUser) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      // Get all users except the current user
+      const users = await User.find(
+        { _id: { $ne: userId } },
+        'first_name last_name email profile_image account_type pratice_area experience'
+      ).sort({ account_type: 1, first_name: 1 }); // Sort by role first, then name
+
+      // Separate lawyers and clients for better organization
+      const lawyers = users.filter(user => user.account_type === 'lawyer');
+      const clients = users.filter(user => user.account_type === 'client');
+
+      return res.status(200).json({
+        success: true,
+        users: {
+          lawyers,
+          clients,
+          all: users
+        }
+      });
+    } catch (error: any) {
+      console.error('Error getting users for sharing:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to get users'
       });
     }
   }

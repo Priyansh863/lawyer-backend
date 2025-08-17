@@ -174,3 +174,37 @@ export const adminLogin = async (req: Request, res: Response) => {
     res.status(500).send({ success: false, message: "Internal server error" });
   }
 };
+
+/**
+ * Create Client by Lawyer - Client Onboarding
+ */
+export const createClientByLawyer = async (req: Request, res: Response) => {
+  try {
+    const { lawyer_id, client_first_name, client_last_name, client_email, client_password, client_phone } = req.body;
+    
+    // Validate required fields
+    if (!lawyer_id || !client_first_name || !client_email || !client_password) {
+      return res.status(400).send({
+        success: false,
+        message: "Missing required fields: lawyer_id, client_first_name, client_email, client_password"
+      });
+    }
+
+    const response: ResponseObject = await AuthService.createClientByLawyer({
+      lawyer_id,
+      client_first_name,
+      client_last_name,
+      client_email,
+      client_password,
+      client_phone
+    });
+    
+    res.status(200).send(response);
+  } catch (error) {
+    console.error("Create client error:", error);
+    res.status(500).send({ 
+      success: false, 
+      message: "Internal server error" 
+    });
+  }
+};

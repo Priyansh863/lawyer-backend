@@ -44,6 +44,7 @@ userRoute.put("/client/:clientId/notes", authenticateToken, UserController.updat
 userRoute.get("/client/:clientId/notes", authenticateToken, UserController.getClientNotes);
 
 userRoute.get("/lawyers", UserController.getLawyers);
+userRoute.get("/clients-list", authenticateToken, UserController.getClientsList);
 
 
 export default userRoute;

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import Case from '../models/case';
+import Case, {  CaseType, CourtType } from '../models/case';
 import { User } from '../models/user';
 import { Types } from 'mongoose';
 
@@ -192,15 +192,32 @@ export class CaseController {
         key_points,
         client_id,
         lawyer_id,
-        status = 'Pending',
+        case_type,
+        court_type,
+        status = "pending",
         files = []
       } = req.body;
 
       // Validate required fields
-      if (!title || !description || !client_id || !lawyer_id) {
+      if (!title || !description || !client_id || !lawyer_id || !case_type || !court_type) {
         return res.status(400).json({
           success: false,
-          message: 'Missing required fields: title, description, client_id, lawyer_id'
+          message: 'Missing required fields: title, description, client_id, lawyer_id, case_type, court_type'
+        });
+      }
+
+      // Validate case_type and court_type
+      if (!Object.values(CaseType).includes(case_type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid case_type. Must be one of: ' + Object.values(CaseType).join(', ')
+        });
+      }
+
+      if (!Object.values(CourtType).includes(court_type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid court_type. Must be one of: ' + Object.values(CourtType).join(', ')
         });
       }
 
@@ -247,6 +264,8 @@ export class CaseController {
         key_points: key_points || [],
         client_id: new Types.ObjectId(client_id),
         lawyer_id: new Types.ObjectId(lawyer_id),
+        case_type,
+        court_type,
         status,
         files,
         important_dates: []
@@ -377,12 +396,7 @@ export class CaseController {
         });
       }
 
-      if (!['Pending', 'Approved', 'Rejected'].includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid status. Must be Pending, Approved, or Rejected'
-        });
-      }
+   
 
       const updatedCase = await Case.findByIdAndUpdate(
         id,

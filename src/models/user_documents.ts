@@ -3,7 +3,14 @@ import mongoose, { Schema, Document } from "mongoose";
 // Document privacy levels
 export enum DocumentPrivacy {
   PUBLIC = 'public',
-  PRIVATE = 'private'
+  PRIVATE = 'private', // Visible to selected users only
+  FULLY_PRIVATE = 'fully_private' // Only uploader can view
+}
+
+// Document types
+export enum DocumentType {
+  CASE_RELATED = 'case_related',
+  GENERAL = 'general'
 }
 
 // Document processing status
@@ -21,11 +28,15 @@ export interface IUserDocument extends Document {
   status: DocumentStatus;
   link: string;
   privacy: DocumentPrivacy;
+  document_type: DocumentType;
+  case_id?: mongoose.Types.ObjectId; // Reference to associated case
   file_size?: number;
   file_type?: string;
-  shared_with: mongoose.Types.ObjectId[]; // Array of lawyer IDs this document is shared with
+  shared_with: mongoose.Types.ObjectId[]; // Array of user IDs this document is shared with
+  is_secure_link?: boolean; // Documents uploaded via secure link
   created_at: Date;
   updated_at: Date;
+  is_shared: boolean; // Virtual field
 }
 
 const UserDocumentSchema: Schema = new Schema(
@@ -49,15 +60,32 @@ const UserDocumentSchema: Schema = new Schema(
       type: String,
       enum: Object.values(DocumentPrivacy),
       required: true,
-      default: DocumentPrivacy.PUBLIC,
+      default: DocumentPrivacy.PRIVATE,
       index: true
+    },
+    document_type: {
+      type: String,
+      enum: Object.values(DocumentType),
+      required: true,
+      default: DocumentType.GENERAL
+    },
+    case_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Case",
+      required: function() {
+        return this.document_type === DocumentType.CASE_RELATED;
+      }
     },
     file_size: { type: Number },
     file_type: { type: String },
     shared_with: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"
-    }]
+    }],
+    is_secure_link: {
+      type: Boolean,
+      default: false
+    }
   },
   { 
     timestamps: true,
@@ -76,28 +104,30 @@ UserDocumentSchema.virtual('is_shared').get(function() {
   return this.shared_with && this.shared_with.length > 0;
 });
 
-// Static method to get documents accessible by a user (own + shared)
+// Static method to get documents accessible by a user (own + shared + public)
 UserDocumentSchema.statics.getAccessibleDocuments = function(userId: string, userRole: string) {
   const query: any = {
     $or: [
-      // User's own documents
+      // User's own documents (all privacy levels)
       { uploaded_by: userId },
-      // Documents shared with this user (if lawyer)
-      ...(userRole === 'lawyer' ? [{ shared_with: userId }] : [])
+      // Public documents (visible to everyone)
+      { privacy: 'public' },
+      // Documents shared with this user (private with shared access)
+      { shared_with: userId, privacy: 'private' }
     ]
   };
   
   return this.find(query)
-    .populate('uploaded_by', 'name email role')
-    .populate('shared_with', 'name email')
+    .populate('uploaded_by', 'first_name last_name email account_type')
+    .populate('shared_with', 'first_name last_name email account_type')
     .sort({ created_at: -1 });
 };
 
 // Static method to share document with lawyers
-UserDocumentSchema.statics.shareWithLawyers = function(documentId: string, lawyerIds: string[]) {
+UserDocumentSchema.statics.shareWithLawyers = function(documentId: string, userIds: string[]) {
   return this.findByIdAndUpdate(
     documentId,
-    { $addToSet: { shared_with: { $each: lawyerIds } } },
+    { $addToSet: { shared_with: { $each: userIds } } },
     { new: true }
   ).populate('shared_with', 'name email');
 };
