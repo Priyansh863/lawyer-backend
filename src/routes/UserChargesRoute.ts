@@ -13,4 +13,16 @@ userChargesRoute.get("/charges/:userId", authenticateToken, UserChargesControlle
 // Get all lawyers with their charges
 userChargesRoute.get("/lawyers-with-charges", authenticateToken, UserChargesController.getAllLawyersWithCharges);
 
+// Check if client has sufficient tokens for consultation
+userChargesRoute.post("/check-token-balance", authenticateToken, UserChargesController.checkTokenBalance);
+
+// Deduct tokens when starting consultation
+userChargesRoute.post("/deduct-tokens", authenticateToken, UserChargesController.deductTokens);
+
+// Get client's token balance and transaction history
+userChargesRoute.get("/client-token-info/:clientId", authenticateToken, UserChargesController.getClientTokenInfo);
+
+// Get token transaction history for a user
+userChargesRoute.get("/token-history/:userId", authenticateToken, UserChargesController.getTokenTransactionHistory);
+
 export default userChargesRoute;

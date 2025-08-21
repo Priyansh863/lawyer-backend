@@ -62,53 +62,11 @@ const MeetingSchema: Schema = new Schema(
       required: true,
       index: true
     },
-    meeting_title: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 200
-    },
-    meeting_description: {
-      type: String,
-      trim: true,
-      maxlength: 1000
-    },
     meeting_type: {
       type: String,
       enum: Object.values(EMeetingType),
       required: true,
       default: EMeetingType.VIDEO
-    },
-    start_time: {
-      type: Date,
-      required: true,
-      validate: {
-        validator: function(value: Date) {
-          return value > new Date();
-        },
-        message: 'Start time must be in the future'
-      }
-    },
-    end_time: {
-      type: Date,
-      required: true,
-      validate: {
-        validator: function(this: IMeeting, value: Date) {
-          return value > this.start_time;
-        },
-        message: 'End time must be after start time'
-      }
-    },
-    duration_minutes: {
-      type: Number,
-      required: true,
-      min: 5,
-      max: 480 // 8 hours max
-    },
-    timezone: {
-      type: String,
-      required: true,
-      default: 'UTC'
     },
     meeting_link: {
       type: String,
@@ -125,60 +83,6 @@ const MeetingSchema: Schema = new Schema(
       default: EMeetingStatus.PENDING_APPROVAL,
       index: true
     },
-    initiated_by: {
-      type: String,
-      enum: ['lawyer', 'client'],
-      required: true
-    },
-    approved_by: {
-      type: Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    approved_at: {
-      type: Date
-    },
-    rejection_reason: {
-      type: String,
-      trim: true,
-      maxlength: 500
-    },
-    cancellation_reason: {
-      type: String,
-      trim: true,
-      maxlength: 500
-    },
-    notes: {
-      type: String,
-      trim: true,
-      maxlength: 2000
-    },
-    reminder_sent: {
-      type: Boolean,
-      default: false
-    },
-    reminder_sent_at: {
-      type: Date
-    },
-    case_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Case',
-      index: true
-    },
-    agenda_items: [{
-      type: String,
-      trim: true,
-      maxlength: 200
-    }],
-    created_by: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    },
-    updated_by: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    }
   },
   {
     timestamps: {

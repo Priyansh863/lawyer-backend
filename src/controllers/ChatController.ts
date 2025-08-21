@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import Chat from '../models/Chat';
 import Message from '../models/Message';
 import { User } from '../models/user';
+import { UserTokenBalance, TokenTransaction, ETransactionType, ETransactionStatus } from '../models/token';
 import mongoose from 'mongoose';
 
 interface AuthenticatedRequest extends Request {
@@ -48,9 +49,44 @@ class ChatController {
         return;
       }
 
-      // Determine who is lawyer and who is client (assuming current user is lawyer)
-      const lawyerId = userId;
-      const clientId = participantId;
+      // Determine who is lawyer and who is client
+      let lawyerId: string, clientId: string;
+      if (currentUser.account_type === 'lawyer') {
+        lawyerId = userId;
+        clientId = participantId;
+      } else {
+        lawyerId = participantId;
+        clientId = userId;
+      }
+
+      // If client is initiating chat, check token balance and lawyer charges
+      if (currentUser.account_type === 'client') {
+        const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+        if (!lawyer) {
+          res.status(404).json({
+            success: false,
+            message: 'Lawyer not found'
+          });
+          return;
+        }
+
+        const requiredTokens = lawyer.charges || 0;
+        if (requiredTokens > 0) {
+          // Check client's token balance
+          const clientTokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
+          if (!clientTokenBalance || clientTokenBalance.current_balance < requiredTokens) {
+            res.status(200).json({
+              success: false,
+              message: `Insufficient tokens. Required: ${requiredTokens}, Available: ${clientTokenBalance?.current_balance || 0}`,
+              requiredTokens,
+              currentBalance: clientTokenBalance?.current_balance || 0,
+              lawyerCharges: lawyer.charges,
+              lawyerName: `${lawyer.first_name} ${lawyer.last_name}`
+            });
+            return;
+          }
+        }
+      }
 
       // Check if chat already exists between these users
       let existingChat = await Chat.findOne({
@@ -93,8 +129,66 @@ class ChatController {
       });
 
       await newChat.save();
-      await newChat.populate('lawyer_id', 'first_name last_name email avatar');
+      await newChat.populate('lawyer_id', 'first_name last_name email avatar charges');
       await newChat.populate('client_id', 'first_name last_name email avatar');
+
+      // If client initiated and lawyer has charges, deduct tokens
+      if (currentUser.account_type === 'client') {
+        const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+        const tokensToDeduct = lawyer?.charges || 0;
+        
+        if (tokensToDeduct > 0) {
+          try {
+            // Deduct tokens from client's balance
+            const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, tokensToDeduct);
+            
+            // Create transaction record
+            await TokenTransaction.create({
+              user_id: clientId,
+              type: ETransactionType.usage,
+              amount: -tokensToDeduct,
+              description: `Chat consultation started with ${lawyer.first_name} ${lawyer.last_name}`,
+              category: 'Chat Consultation',
+              status: ETransactionStatus.completed,
+              reference_id: newChat._id.toString(),
+              metadata: {
+                lawyerId: lawyerId,
+                lawyerName: `${lawyer.first_name} ${lawyer.last_name}`,
+                consultationType: 'chat',
+                sessionId: newChat._id.toString()
+              }
+            });
+
+            res.status(201).json({
+              success: true,
+              message: 'Chat created successfully. Tokens deducted.',
+              data: {
+                _id: newChat._id,
+                lawyer_id: newChat.lawyer_id,
+                client_id: newChat.client_id,
+                lastMessage: null,
+                unreadCount: 0,
+                createdAt: newChat.createdAt,
+                updatedAt: newChat.updatedAt,
+                tokenInfo: {
+                  tokensDeducted: tokensToDeduct,
+                  remainingBalance: updatedBalance.current_balance,
+                  lawyerCharges: lawyer.charges
+                }
+              }
+            });
+            return;
+          } catch (tokenError: any) {
+            // If token deduction fails, delete the created chat
+            await Chat.findByIdAndDelete(newChat._id);
+            res.status(400).json({
+              success: false,
+              message: tokenError.message || 'Failed to deduct tokens'
+            });
+            return;
+          }
+        }
+      }
 
       res.status(201).json({
         success: true,

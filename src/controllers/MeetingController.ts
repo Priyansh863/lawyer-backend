@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import Meeting, { EMeetingStatus, EMeetingType } from "../models/meeting";
 import { User } from "../models/user";
 import Case from "../models/case";
+import { UserTokenBalance, TokenTransaction, ETransactionType, ETransactionStatus } from "../models/token";
 import mongoose from 'mongoose';
 
 // Interface for populated user fields
@@ -52,19 +53,46 @@ export default class MeetingController {
         clientId, 
         lawyerId, 
         meetingLink, 
-        meeting_title, 
-        meeting_description, 
-        requested_date, 
-        requested_time 
       } = req.body;
       
       const userId = (req as any).user?.userId || (req as any).user?._id;
 
-      const user= await User.findById(userId).select('first_name last_name email account_type');
+      const user = await User.findById(userId).select('first_name last_name email account_type');
 
-     
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found"
+        });
+      }
 
- 
+      // If client is creating meeting, check token balance and lawyer charges
+      if (user.account_type === 'client') {
+        const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+        if (!lawyer) {
+          return res.status(404).json({
+            success: false,
+            message: "Lawyer not found"
+          });
+        }
+
+        const requiredTokens = lawyer.charges || 0;
+        if (requiredTokens > 0) {
+          // Check client's token balance
+          const clientTokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
+          if (!clientTokenBalance || clientTokenBalance.current_balance < requiredTokens) {
+            return res.status(200).json({
+              success: false,
+              message: `Insufficient tokens for video meeting. Required: ${requiredTokens}, Available: ${clientTokenBalance?.current_balance || 0}`,
+              requiredTokens,
+              currentBalance: clientTokenBalance?.current_balance || 0,
+              lawyerCharges: lawyer.charges,
+              lawyerName: `${lawyer.first_name} ${lawyer.last_name}`
+            });
+          }
+        }
+      }
+
       // Determine meeting status based on who creates it
       let status = EMeetingStatus.PENDING_APPROVAL;
       let approval_date = null;
@@ -86,30 +114,71 @@ export default class MeetingController {
       const meeting = await Meeting.create({
         lawyer_id: lawyerId,
         client_id: clientId,
-        meeting_title: meeting_title || 'Video Consultation',
-        meeting_description: meeting_description || '',
-        requested_date: requested_date ? new Date(requested_date) : new Date(),
-        requested_time: requested_time || '',
         meeting_link: meetingLink || '',
         status: status,
         approval_date: approval_date,
-        created_by: userId
       });
+
+      // If client created meeting and it's auto-approved (or if lawyer created), deduct tokens
+      let tokenInfo = null;
+      if (user.account_type === 'client' && status === EMeetingStatus.APPROVED) {
+        const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+        const tokensToDeduct = lawyer?.charges || 0;
+        
+        if (tokensToDeduct > 0) {
+          try {
+            // Deduct tokens from client's balance
+            const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, tokensToDeduct);
+            
+            // Create transaction record
+            await TokenTransaction.create({
+              user_id: clientId,
+              type: ETransactionType.usage,
+              amount: -tokensToDeduct,
+              description: `Video meeting scheduled with ${lawyer.first_name} ${lawyer.last_name}`,
+              category: 'Video Consultation',
+              status: ETransactionStatus.completed,
+              reference_id: meeting._id.toString(),
+              metadata: {
+                lawyerId: lawyerId,
+                lawyerName: `${lawyer.first_name} ${lawyer.last_name}`,
+                consultationType: 'video',
+                sessionId: meeting._id.toString(),
+              }
+            });
+
+            tokenInfo = {
+              tokensDeducted: tokensToDeduct,
+              remainingBalance: updatedBalance.current_balance,
+              lawyerCharges: lawyer.charges
+            };
+          } catch (tokenError: any) {
+            // If token deduction fails, delete the created meeting
+            await Meeting.findByIdAndDelete(meeting._id);
+            return res.status(400).json({
+              success: false,
+              message: tokenError.message || 'Failed to deduct tokens for meeting'
+            });
+          }
+        }
+      }
 
       // Populate lawyer and client details for response
       const populatedMeeting = await Meeting.findById(meeting._id)
         .populate('lawyer_id', 'first_name last_name email account_type charges')
         .populate('client_id', 'first_name last_name email account_type')
-        .populate('created_by', 'first_name last_name email account_type');
 
       const message = status === EMeetingStatus.APPROVED 
-        ? "Meeting created and approved successfully" 
+        ? (tokenInfo ? "Meeting created and approved successfully. Tokens deducted." : "Meeting created and approved successfully")
         : "Meeting request created successfully and sent for approval";
 
       return res.status(201).json({
         success: true,
         message: message,
-        data: populatedMeeting
+        data: {
+          ...populatedMeeting.toObject(),
+          tokenInfo
+        }
       });
 
     } catch (error: any) {
@@ -144,22 +213,83 @@ export default class MeetingController {
 
     
 
+      // Get lawyer info for token deduction
+      const lawyer = await User.findById(meeting.lawyer_id).select('charges first_name last_name');
+      if (!lawyer) {
+        return res.status(404).json({
+          success: false,
+          message: "Lawyer not found"
+        });
+      }
+
+      // Check if client has sufficient tokens before approving
+      const tokensRequired = lawyer.charges || 0;
+      let tokenInfo = null;
+      
+      if (tokensRequired > 0) {
+        const clientTokenBalance = await UserTokenBalance.findOne({ user_id: meeting.client_id });
+        if (!clientTokenBalance || clientTokenBalance.current_balance < tokensRequired) {
+          return res.status(200).json({
+            success: false,
+            message: `Cannot approve meeting. Client has insufficient tokens. Required: ${tokensRequired}, Available: ${clientTokenBalance?.current_balance || 0}`,
+            requiredTokens: tokensRequired,
+            currentBalance: clientTokenBalance?.current_balance || 0
+          });
+        }
+
+        // Deduct tokens from client's balance
+        try {
+          const updatedBalance = await (UserTokenBalance as any).useTokens(meeting.client_id.toString(), tokensRequired);
+          
+          // Create transaction record
+          await TokenTransaction.create({
+            user_id: meeting.client_id,
+            type: ETransactionType.usage,
+            amount: -tokensRequired,
+            description: `Video meeting approved with ${lawyer.first_name} ${lawyer.last_name}`,
+            category: 'Video Consultation',
+            status: ETransactionStatus.completed,
+            reference_id: meetingId,
+            metadata: {
+              lawyerId: meeting.lawyer_id,
+              lawyerName: `${lawyer.first_name} ${lawyer.last_name}`,
+              consultationType: 'video',
+              sessionId: meetingId,
+              approvedAt: new Date()
+            }
+          });
+
+          tokenInfo = {
+            tokensDeducted: tokensRequired,
+            remainingBalance: updatedBalance.current_balance,
+            lawyerCharges: lawyer.charges
+          };
+        } catch (tokenError: any) {
+          return res.status(400).json({
+            success: false,
+            message: tokenError.message || 'Failed to deduct tokens for meeting approval'
+          });
+        }
+      }
+
       // Update meeting to approved status
       const updatedMeeting = await Meeting.findByIdAndUpdate(
         meetingId,
         {
           status: EMeetingStatus.APPROVED,
-
           approval_date: new Date()
         },
         { new: true }
-      ).populate('lawyer_id', 'first_name last_name email account_type')
+      ).populate('lawyer_id', 'first_name last_name email account_type charges')
        .populate('client_id', 'first_name last_name email account_type');
 
       return res.status(200).json({
         success: true,
-        message: "Meeting approved successfully",
-        data: updatedMeeting
+        message: tokenInfo ? "Meeting approved successfully. Tokens deducted from client." : "Meeting approved successfully",
+        data: {
+          ...updatedMeeting.toObject(),
+          tokenInfo
+        }
       });
 
     } catch (error: any) {
@@ -250,7 +380,6 @@ export default class MeetingController {
       const meetings = await Meeting.find(query)
         .populate('lawyer_id', 'first_name last_name email account_type charges')
         .populate('client_id', 'first_name last_name email account_type')
-        .populate('created_by', 'first_name last_name email account_type')
         .sort({ createdAt: -1 });
 
       return res.status(200).json({
@@ -294,7 +423,6 @@ export default class MeetingController {
       const meetings = await Meeting.find(query)
         .populate('lawyer_id', 'first_name last_name email account_type charges')
         .populate('client_id', 'first_name last_name email account_type')
-        .populate('created_by', 'first_name last_name email account_type')
         .sort({ createdAt: -1 });
 
       return res.status(200).json({

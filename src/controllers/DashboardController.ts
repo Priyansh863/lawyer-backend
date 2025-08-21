@@ -38,12 +38,11 @@ export default class DashboardController {
       caseSummary.forEach((item) => {
         console.log(item,"itemitemitemitemitem")
         // Active cases: in_progress, pending
-        if (item._id === "in_progress" || item._id === "pending") {
+        if (!["dismissal", "rejection", "withdrawal","suspension"].includes(item._id)) {
           activeCases += item.total;
         }
         // Inactive cases: all completed/closed statuses
-        if (["full_win", "full_loss", "partial_win", "partial_loss", "dismissal", "rejection", 
-             "withdrawal", "mediation", "settlement", "trial_cancellation", "suspension", "closure"].includes(item._id)) {
+        if (["dismissal", "rejection", "withdrawal","suspension"].includes(item._id)) {
           inactiveCases += item.total;
         }
       });
