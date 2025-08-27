@@ -66,11 +66,11 @@ export const updatePaymentValidation = [
 ];
 
 export const createPolicyValidation = [
-  body('id').exists().isNumeric().withMessage('ID is required and must be a number.'),
   body('title').exists().withMessage('Title is required.'),
-  body('url').exists().withMessage('URL is required.'),
-  body('last_updated').optional().isISO8601().withMessage('Last updated must be a valid ISO8601 date.'),
-  body('status').exists().withMessage('Status is required.'),
+  body('slug').exists().withMessage('Slug is required.'),
+  body('content').exists().withMessage('Content is required.'),
+  body('meta_description').optional(),
+  body('status').exists().isIn(['Active', 'Inactive']).withMessage('Status must be Active or Inactive.'),
   (req: Request, res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -81,11 +81,11 @@ export const createPolicyValidation = [
 ];
 
 export const updatePolicyValidation = [
-  body('id').optional().isNumeric().withMessage('ID must be a number.'),
   body('title').optional(),
-  body('url').optional(),
-  body('last_updated').optional().isISO8601().withMessage('Last updated must be a valid ISO8601 date.'),
-  body('status').optional(),
+  body('slug').optional(),
+  body('content').optional(),
+  body('meta_description').optional(),
+  body('status').optional().isIn(['Active', 'Inactive']).withMessage('Status must be Active or Inactive.'),
   (req: Request, res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

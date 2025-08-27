@@ -71,7 +71,7 @@ app.use("/api/v1/chat", chatRoute);
 app.use("/api/v1/ai-marketing", aiMarketingRoute);
 app.use("/api/v1/payment", paymentRoute);
 app.use("/api/v1/content", contentMonitoringRoute);
-app.use("/api/v1/policy", policyRoute);
+app.use("/api/v1/policies", policyRoute);
 app.use("/api/v1/case", caseRoute);
 app.use("/api/v1/stripe", stripeRoute);
 app.use("/api/v1/token", tokenRoute);
