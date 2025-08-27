@@ -37,6 +37,14 @@ class QuestionService {
         // answer field is null by default as defined in the schema
       });
 
+      // Send notification for new Q&A question
+      try {
+        const { NotificationService } = await import('../services/notificationService');
+        await NotificationService.notifyQAQuestionPosted(newQuestion, data.clientId);
+      } catch (notificationError) {
+        console.error('Failed to send Q&A question notification:', notificationError);
+      }
+
       return newQuestion;
     } catch (error) {
       console.error("QuestionService createQuestion error:", error);
@@ -121,6 +129,24 @@ class QuestionService {
       
       // Save the updated question
       await question.save();
+      
+      // Send notification for new Q&A answer
+      try {
+        const { NotificationService } = await import('../services/notificationService');
+        const populatedQuestion = await Question.findById(questionId)
+          .populate('clientId', 'first_name last_name email account_type')
+          .populate('answeredBy', 'first_name last_name email account_type');
+        
+        if (populatedQuestion) {
+          await NotificationService.notifyQAAnswerPosted(
+            { answer }, 
+            populatedQuestion, 
+            lawyerId
+          );
+        }
+      } catch (notificationError) {
+        console.error('Failed to send Q&A answer notification:', notificationError);
+      }
       
       // Return the updated question with populated fields
       return await Question.findById(questionId)

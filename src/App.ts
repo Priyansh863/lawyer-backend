@@ -56,6 +56,8 @@ import contentMonitoringRoute from "./routes/ContentMonitoringRoute";
 import policyRoute from "./routes/PolicyRoute";
 import caseRoute from "./routes/CaseRoute";
 import userChargesRoute from "./routes/UserChargesRoute";
+import notificationRoutes from "./routes/notificationRoutes";
+import placesRoute from "./routes/PlacesRoute";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/meeting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
@@ -74,6 +76,8 @@ app.use("/api/v1/stripe", stripeRoute);
 app.use("/api/v1/token", tokenRoute);
 app.use("/api/v1/secure-link", secureLinkRoute);
 app.use("/api/v1/charges", userChargesRoute);
+app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/places", placesRoute);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -91,8 +95,8 @@ dbConnection.then(() => {
   // Initialize Socket.IO service
   socketService = new SocketService(httpServer);
   
-  httpServer.listen(port, '0.0.0.0', () => {
-    console.log(`Server is running on http://0.0.0.0:${port}`);
+  httpServer.listen(3002, '0.0.0.0', () => {
+    console.log(`Server is running on http://0.0.0.0:3002`);
     console.log(`Socket.IO server initialized`);
   });
   

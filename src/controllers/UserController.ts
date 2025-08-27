@@ -147,13 +147,7 @@ class UserController {
         status
       } = req.body;
 
-      // Validate required fields
-      if (!title || !description || !case_type || !court_type) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Missing required fields: title, description, case_type, court_type" 
-        });
-      }
+     
 
       let clientId = existing_client_id;
 

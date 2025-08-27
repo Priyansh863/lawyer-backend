@@ -4,6 +4,7 @@ import { User } from "../models/user";
 import Case from "../models/case";
 import { UserTokenBalance, TokenTransaction, ETransactionType, ETransactionStatus } from "../models/token";
 import mongoose from 'mongoose';
+import { NotificationService } from '../services/notificationService';
 
 // Interface for populated user fields
 interface PopulatedUser {
@@ -168,6 +169,52 @@ export default class MeetingController {
         .populate('lawyer_id', 'first_name last_name email account_type charges')
         .populate('client_id', 'first_name last_name email account_type')
 
+      // Send notifications for meeting request
+      try {
+        if (user.account_type === 'client') {
+          // Notify lawyer about new meeting request
+          await NotificationService.createNotification({
+            userId: lawyerId,
+            title: 'New Meeting Request',
+            message: `${user.first_name} ${user.last_name} has requested a video consultation with you.`,
+            type: 'video_consultation_started',
+            relatedId: meeting._id,
+            relatedType: 'meeting',
+            redirectUrl: `/meetings/${meeting._id}`,
+            priority: 'high',
+            createdBy: userId
+          });
+
+          // Notify client about meeting request submission
+          await NotificationService.createNotification({
+            userId: clientId,
+            title: 'Meeting Request Submitted',
+            message: `Your meeting request has been sent to the lawyer for approval.`,
+            type: 'video_consultation_started',
+            relatedId: meeting._id,
+            relatedType: 'meeting',
+            redirectUrl: `/meetings/${meeting._id}`,
+            priority: 'medium',
+            createdBy: userId
+          });
+        } else if (user.account_type === 'lawyer') {
+          // Notify client about lawyer-created meeting (auto-approved)
+          await NotificationService.createNotification({
+            userId: clientId,
+            title: 'Meeting Scheduled',
+            message: `${user.first_name} ${user.last_name} has scheduled a video consultation with you.`,
+            type: 'video_consultation_started',
+            relatedId: meeting._id,
+            relatedType: 'meeting',
+            redirectUrl: `/meetings/${meeting._id}`,
+            priority: 'high',
+            createdBy: userId
+          });
+        }
+      } catch (notificationError) {
+        console.error('Failed to send meeting request notifications:', notificationError);
+      }
+
       const message = status === EMeetingStatus.APPROVED 
         ? (tokenInfo ? "Meeting created and approved successfully. Tokens deducted." : "Meeting created and approved successfully")
         : "Meeting request created successfully and sent for approval";
@@ -283,6 +330,13 @@ export default class MeetingController {
       ).populate('lawyer_id', 'first_name last_name email account_type charges')
        .populate('client_id', 'first_name last_name email account_type');
 
+      // Send notification for video consultation approval
+      try {
+        await NotificationService.notifyVideoConsultationStarted(updatedMeeting, meeting.lawyer_id.toString());
+      } catch (notificationError) {
+        console.error('Failed to send video consultation notification:', notificationError);
+      }
+
       return res.status(200).json({
         success: true,
         message: tokenInfo ? "Meeting approved successfully. Tokens deducted from client." : "Meeting approved successfully",
@@ -345,6 +399,24 @@ export default class MeetingController {
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type')
        .populate('client_id', 'first_name last_name email account_type');
+
+      // Send notification for meeting rejection
+      try {
+        await NotificationService.createNotification({
+          userId: updatedMeeting.client_id._id,
+          title: 'Meeting Request Rejected',
+          message: `Your meeting request has been rejected. Reason: ${rejection_reason}`,
+          type: 'video_consultation_started',
+          relatedId: meetingId,
+          relatedType: 'meeting',
+          redirectUrl: `/meetings/${meetingId}`,
+          priority: 'high',
+          metadata: { rejectionReason: rejection_reason },
+          createdBy: lawyer_id
+        });
+      } catch (notificationError) {
+        console.error('Failed to send meeting rejection notification:', notificationError);
+      }
 
       return res.status(200).json({
         success: true,
@@ -532,6 +604,60 @@ export default class MeetingController {
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type')
        .populate('client_id', 'first_name last_name email account_type');
+
+      // Send notifications for meeting status changes
+      try {
+        if (status === EMeetingStatus.ACTIVE) {
+          // Notify both participants that meeting has started
+          const otherUserId = updatedMeeting.client_id._id.toString() === user_id.toString() 
+            ? updatedMeeting.lawyer_id._id 
+            : updatedMeeting.client_id._id;
+
+          await NotificationService.createNotification({
+            userId: otherUserId,
+            title: 'Meeting Started',
+            message: `Your video consultation has started. Join now!`,
+            type: 'video_consultation_started',
+            relatedId: meetingId,
+            relatedType: 'meeting',
+            redirectUrl: `/meetings/${meetingId}`,
+            priority: 'high',
+            createdBy: user_id
+          });
+        } else if (status === EMeetingStatus.COMPLETED) {
+          // Notify both participants that meeting has ended
+          const userIds = [updatedMeeting.client_id._id, updatedMeeting.lawyer_id._id];
+          await NotificationService.createBulkNotifications(userIds, {
+            title: 'Meeting Completed',
+            message: `Your video consultation has been completed.`,
+            type: 'video_consultation_started',
+            relatedId: meetingId,
+            relatedType: 'meeting',
+            redirectUrl: `/meetings/${meetingId}`,
+            priority: 'medium',
+            createdBy: user_id
+          });
+        } else if (status === EMeetingStatus.CANCELLED) {
+          // Notify the other participant about cancellation
+          const otherUserId = updatedMeeting.client_id._id.toString() === user_id.toString() 
+            ? updatedMeeting.lawyer_id._id 
+            : updatedMeeting.client_id._id;
+
+          await NotificationService.createNotification({
+            userId: otherUserId,
+            title: 'Meeting Cancelled',
+            message: `Your video consultation has been cancelled.`,
+            type: 'video_consultation_started',
+            relatedId: meetingId,
+            relatedType: 'meeting',
+            redirectUrl: `/meetings/${meetingId}`,
+            priority: 'high',
+            createdBy: user_id
+          });
+        }
+      } catch (notificationError) {
+        console.error('Failed to send meeting status update notifications:', notificationError);
+      }
 
       return res.status(200).json({
         success: true,

@@ -2,35 +2,6 @@ import mongoose, { Schema, Document } from "mongoose";
 
 
 
-export enum CaseType {
-  CIVIL = 'civil',
-  CRIMINAL = 'criminal',
-  FAMILY = 'family',
-  CORPORATE = 'corporate',
-  IMMIGRATION = 'immigration',
-  PERSONAL_INJURY = 'personal_injury',
-  REAL_ESTATE = 'real_estate',
-  INTELLECTUAL_PROPERTY = 'intellectual_property',
-  EMPLOYMENT = 'employment',
-  TAX = 'tax',
-  BANKRUPTCY = 'bankruptcy',
-  OTHER = 'other'
-}
-
-export enum CourtType {
-  DISTRICT_COURT = 'district_court',
-  HIGH_COURT = 'high_court',
-  SUPREME_COURT = 'supreme_court',
-  FAMILY_COURT = 'family_court',
-  COMMERCIAL_COURT = 'commercial_court',
-  CONSUMER_COURT = 'consumer_court',
-  LABOR_COURT = 'labor_court',
-  TAX_COURT = 'tax_court',
-  TRIBUNAL = 'tribunal',
-  ARBITRATION = 'arbitration',
-  OTHER = 'other'
-}
-
 // Korean Legal Case Status Types based on court outcomes
 export enum CaseStatus {
   // Judgment Outcomes (판결 종국)
@@ -55,8 +26,8 @@ export enum CaseStatus {
 export interface ICase extends Document {
   case_number: string;
   status: string;
-  case_type: CaseType;
-  court_type: CourtType;
+  case_type: string;
+  court_type: string;
   title: string;
   description: string;
   summary: string;
@@ -91,13 +62,11 @@ const CaseSchema: Schema = new Schema(
     },
     case_type: {
       type: String,
-      enum: Object.values(CaseType),
       required: true,
       index: true
     },
     court_type: {
       type: String,
-      enum: Object.values(CourtType),
       required: true,
       index: true
     },

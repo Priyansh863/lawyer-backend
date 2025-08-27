@@ -4,6 +4,7 @@ import Message from '../models/Message';
 import { User } from '../models/user';
 import { UserTokenBalance, TokenTransaction, ETransactionType, ETransactionStatus } from '../models/token';
 import mongoose from 'mongoose';
+import { NotificationService } from '../services/notificationService';
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -159,6 +160,13 @@ class ChatController {
               }
             });
 
+            // Send notification for new chat
+            try {
+              await NotificationService.notifyChatStarted(newChat, userId);
+            } catch (notificationError) {
+              console.error('Failed to send chat notification:', notificationError);
+            }
+
             res.status(201).json({
               success: true,
               message: 'Chat created successfully. Tokens deducted.',
@@ -188,6 +196,13 @@ class ChatController {
             return;
           }
         }
+      }
+
+      // Send notification for new chat (no tokens case)
+      try {
+        await NotificationService.notifyChatStarted(newChat, userId);
+      } catch (notificationError) {
+        console.error('Failed to send chat notification:', notificationError);
       }
 
       res.status(201).json({

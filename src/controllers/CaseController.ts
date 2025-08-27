@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
-import Case, {  CaseType, CourtType } from '../models/case';
+import Case from '../models/case';
 import { User } from '../models/user';
 import { Types } from 'mongoose';
+import { NotificationService } from '../services/notificationService';
 
 interface AuthRequest extends Request {
   user?: {
@@ -198,36 +199,10 @@ export class CaseController {
         files = []
       } = req.body;
 
-      // Validate required fields
-      if (!title || !description || !client_id || !lawyer_id || !case_type || !court_type) {
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required fields: title, description, client_id, lawyer_id, case_type, court_type'
-        });
-      }
+ 
 
       // Validate case_type and court_type
-      if (!Object.values(CaseType).includes(case_type)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid case_type. Must be one of: ' + Object.values(CaseType).join(', ')
-        });
-      }
-
-      if (!Object.values(CourtType).includes(court_type)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid court_type. Must be one of: ' + Object.values(CourtType).join(', ')
-        });
-      }
-
-      // Validate ObjectIds
-      if (!Types.ObjectId.isValid(client_id) || !Types.ObjectId.isValid(lawyer_id)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid client_id or lawyer_id'
-        });
-      }
+    
 
       // Check if client and lawyer exist
       const client = await User.findById(client_id);
@@ -278,6 +253,45 @@ export class CaseController {
         .populate('client_id', 'first_name last_name email phone')
         .populate('lawyer_id', 'first_name last_name email');
 
+      // Send notifications for new case creation
+      try {
+        // Notify all lawyers about new case
+        await NotificationService.notifyNewCaseCreated(
+          savedCase,
+          client_id
+        );
+        
+        // Also notify the specific assigned lawyer
+        await NotificationService.createNotification({
+          userId: lawyer_id,
+          title: 'New Case Assigned',
+          message: `You have been assigned a new case: "${title}"`,
+          type: 'case_created',
+          relatedId: savedCase._id,
+          relatedType: 'case',
+          redirectUrl: `/cases/${savedCase._id}`,
+          priority: 'high',
+          metadata: { caseNumber: savedCase.case_number },
+          createdBy: client_id
+        });
+
+        // Notify the client about case creation confirmation
+        await NotificationService.createNotification({
+          userId: client_id,
+          title: 'Case Created Successfully',
+          message: `Your case "${title}" has been created and assigned to ${lawyer.first_name} ${lawyer.last_name}`,
+          type: 'case_created',
+          relatedId: savedCase._id,
+          relatedType: 'case',
+          redirectUrl: `/cases/${savedCase._id}`,
+          priority: 'medium',
+          metadata: { caseNumber: savedCase.case_number },
+          createdBy: client_id
+        });
+      } catch (notificationError) {
+        console.error('Failed to send case creation notifications:', notificationError);
+      }
+
       res.status(201).json({
         success: true,
         message: 'Case created successfully',
@@ -327,6 +341,27 @@ export class CaseController {
           success: false,
           message: 'Case not found'
         });
+      }
+
+      // Send notifications for case update
+      try {
+        // Notify both client and lawyer about case update
+        const userIds = [updatedCase.client_id._id,updatedCase.lawyer_id];
+      
+
+        await NotificationService.createBulkNotifications(userIds, {
+          title: 'Case Updated',
+          message: `Case "${updatedCase.title}" has been updated with new information.`,
+          type: 'case_status_changed',
+          relatedId: updatedCase._id,
+          relatedType: 'case',
+          redirectUrl: `/cases/${updatedCase._id}`,
+          priority: 'medium',
+          metadata: { caseNumber: updatedCase.case_number },
+          createdBy: req.user?._id || updatedCase.lawyer_id._id
+        });
+      } catch (notificationError) {
+        console.error('Failed to send case update notifications:', notificationError);
       }
 
       res.json({
@@ -411,6 +446,17 @@ export class CaseController {
           success: false,
           message: 'Case not found'
         });
+      }
+
+      // Send notifications for case status change
+      try {
+        await NotificationService.notifyCaseStatusChanged(
+          updatedCase,
+          status,
+          req.user?._id || updatedCase.lawyer_id._id.toString()
+        );
+      } catch (notificationError) {
+        console.error('Failed to send case status update notifications:', notificationError);
       }
 
       res.json({

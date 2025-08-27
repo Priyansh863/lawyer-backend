@@ -191,7 +191,7 @@ const BlogSchema: Schema = new Schema({
 
 // Instance methods
 BlogSchema.methods.generateCustomUrl = function(): string {
-  const baseUrl = process.env.FRONTEND_URL || 'https://yourapp.com';
+  const baseUrl = process.env.FRONTEND_URL || 'https://lawgg.net';
   const spatial = this.spatialInfo;
   
   if (!spatial || (!spatial.latitude && !spatial.longitude)) {
@@ -210,7 +210,7 @@ BlogSchema.methods.generateCustomUrl = function(): string {
 };
 
 BlogSchema.methods.generateShortUrl = function(): string {
-  const baseUrl = process.env.FRONTEND_URL || 'https://yourapp.com';
+  const baseUrl = process.env.FRONTEND_URL || 'https://lawgg.net';
   const spatial = this.spatialInfo;
   
   if (!spatial || (!spatial.latitude && !spatial.longitude)) {

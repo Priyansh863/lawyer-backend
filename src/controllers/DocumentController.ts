@@ -7,7 +7,7 @@ import path from "path";
 import { User } from "../models/user";
 import Case from "../models/case";
 import mongoose from "mongoose";
-import { EMeetingStatus } from "../models/meeting";
+import { NotificationService } from '../services/notificationService';
 
 export default class DocumentController {
   /**
@@ -87,6 +87,15 @@ export default class DocumentController {
         try {
           const aiResult = await AIService.processDocument(doc._id.toString());
           
+          // Send notification for document upload if public (after AI processing)
+          try {
+            if (privacy === DocumentPrivacy.PUBLIC) {
+              await NotificationService.notifyDocumentUploaded(doc, user_id);
+            }
+          } catch (notificationError) {
+            console.error('Failed to send document upload notification:', notificationError);
+          }
+          
           if (aiResult.success) {
             // Fetch updated document with summary
             const updatedDoc = await UserDocument.findById(doc._id);
@@ -115,6 +124,15 @@ export default class DocumentController {
           });
         }
       } else {
+        // Send notification for document upload if public
+        try {
+          if (privacy === DocumentPrivacy.PUBLIC) {
+            await NotificationService.notifyDocumentUploaded(doc, user_id);
+          }
+        } catch (notificationError) {
+          console.error('Failed to send document upload notification:', notificationError);
+        }
+
         // Return success for non-AI uploads
         return res.status(200).json({
           success: true,
@@ -178,6 +196,15 @@ export default class DocumentController {
           document: doc,
           message: "Document uploaded successfully. AI processing started in background."
         });
+      }
+
+      // Send notification for document upload if public
+      try {
+        if (privacy === DocumentPrivacy.PUBLIC) {
+          await NotificationService.notifyDocumentUploaded(doc, userId);
+        }
+      } catch (notificationError) {
+        console.error('Failed to send document upload notification:', notificationError);
       }
 
       // For non-PDF files, just return success
@@ -317,6 +344,15 @@ export default class DocumentController {
       // Commit transaction if everything is successful
       await session.commitTransaction();
       session.endSession();
+
+      // Send notification for document upload if public
+      try {
+        if (privacy === DocumentPrivacy.PUBLIC) {
+          await NotificationService.notifyDocumentUploaded(savedDoc, userId);
+        }
+      } catch (notificationError) {
+        console.error('Failed to send document upload notification:', notificationError);
+      }
 
       // If AI processing is requested and file is PDF
       if (processWithAI && isPDFFile(fileName)) {
