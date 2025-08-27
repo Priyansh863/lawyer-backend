@@ -58,6 +58,7 @@ import caseRoute from "./routes/CaseRoute";
 import userChargesRoute from "./routes/UserChargesRoute";
 import notificationRoutes from "./routes/notificationRoutes";
 import placesRoute from "./routes/PlacesRoute";
+import adminDashboardRoute from "./routes/AdminDashboardRoute";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/meeting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
@@ -78,6 +79,7 @@ app.use("/api/v1/secure-link", secureLinkRoute);
 app.use("/api/v1/charges", userChargesRoute);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/places", placesRoute);
+app.use("/api/v1/admin", adminDashboardRoute);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

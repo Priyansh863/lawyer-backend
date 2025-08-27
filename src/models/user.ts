@@ -56,10 +56,9 @@ const UserSchema = new mongoose.Schema(
       required: true,
       default: 1,
     },
-
     is_verified: {
       type: Number,
-      required: true,
+      required: true,   
       default: 0,
     },
     is_profile_completed: {

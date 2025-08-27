@@ -120,22 +120,6 @@ class AuthServices {
     const userInfo = await User.findOne(query);
     console.log("Admin Login userInfo:>>>>>>>>>>>>>>>", userInfo);
 
-    // console.log("Admin Login list:>>>>>>>>>>>>>>>", list);
-    if (!userInfo) {
-      return { success: false, message: "no_user_found" };
-    }
-    // Check if user is active
-    if (!userInfo.is_active) {
-      return { success: false, message: "user_not_active" };
-    }
-    // Check if user is verified
-    if (!userInfo.is_verified) {
-      return { success: false, message: "user_not_verified" };
-    }
-    // // Check if user is admin
-    // if (userInfo.account_type !== 'admin') {
-    //   return { success: false, message: "not_admin_user" };
-    // }
     // Verify password
     if (await bcrypt.compare(password.trim(), userInfo.password as string)) {
       const dbData = await dbConfig.secretManagerConnection();

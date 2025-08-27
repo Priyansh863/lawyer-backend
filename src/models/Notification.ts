@@ -4,12 +4,12 @@ interface INotification extends mongoose.Document {
   userId: mongoose.Types.ObjectId;
   title: string;
   message: string;
-  type: 'case_created' | 'case_status_changed' | 'document_uploaded' | 'chat_started' | 'video_consultation_started' | 'qa_question_posted' | 'qa_answer_posted' | 'general';
+  type: string;
   relatedId?: mongoose.Types.ObjectId;
-  relatedType?: 'case' | 'document' | 'chat' | 'meeting' | 'qa_question' | 'qa_answer';
+  relatedType?: string;
   redirectUrl?: string;
   isRead: boolean;
-  priority: 'low' | 'medium' | 'high';
+  priority: string;
   metadata: any;
   createdBy?: mongoose.Types.ObjectId;
   markAsRead(): Promise<INotification>;
@@ -40,16 +40,6 @@ const notificationSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: [
-      'case_created',
-      'case_status_changed',
-      'document_uploaded',
-      'chat_started',
-      'video_consultation_started',
-      'qa_question_posted',
-      'qa_answer_posted',
-      'general'
-    ]
   },
   relatedId: {
     type: mongoose.Schema.Types.ObjectId,
