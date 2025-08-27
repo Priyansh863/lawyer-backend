@@ -118,7 +118,10 @@ export class NotificationService {
 
   static async notifyDocumentUploaded(documentData: any, uploadedBy: mongoose.Types.ObjectId | string) {
     try {
+      console.log('Notifying document uploaded...');
       if (documentData.privacy === 'public') {
+        console.log('Privacy is public, notifying all users...');
+
         // Notify all users about public document
         const User = mongoose.model('User');
         const allUsers = await User.find({ _id: { $ne: uploadedBy } }).select('_id');
@@ -126,7 +129,7 @@ export class NotificationService {
 
         await this.createBulkNotifications(userIds, {
           title: 'New Public Document',
-          message: `A new public document "${documentData.fileName}" has been uploaded.`,
+          message: `A new public document has been uploaded.`,
           type: 'document_uploaded',
           relatedId: documentData._id,
           relatedType: 'document',
@@ -136,6 +139,7 @@ export class NotificationService {
           createdBy: uploadedBy
         });
       }
+      console.log('Notification sent successfully');
     } catch (error) {
       console.error('Error notifying document uploaded:', error);
     }
@@ -200,7 +204,7 @@ export class NotificationService {
 
       await this.createBulkNotifications(lawyerIds, {
         title: 'New Q&A Question',
-        message: `A new question has been posted: "${questionData.title}"`,
+        message: `A new question has been posted:`,
         type: 'qa_question_posted',
         relatedId: questionData._id,
         relatedType: 'qa_question',

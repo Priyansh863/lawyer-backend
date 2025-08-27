@@ -186,6 +186,8 @@ export class CaseController {
    */
   static async createCase(req: AuthRequest, res: Response) {
     try {
+      console.log('Starting case creation');
+
       const {
         title,
         description,
@@ -199,16 +201,19 @@ export class CaseController {
         files = []
       } = req.body;
 
- 
+      console.log('Received request body:', req.body);
 
       // Validate case_type and court_type
-    
 
       // Check if client and lawyer exist
       const client = await User.findById(client_id);
+      console.log('Found client:', client);
+
       const lawyer = await User.findById(lawyer_id);
+      console.log('Found lawyer:', lawyer);
 
       if (!client) {
+        console.log('Client not found');
         return res.status(404).json({
           success: false,
           message: 'Client not found'
@@ -216,6 +221,7 @@ export class CaseController {
       }
 
       if (!lawyer) {
+        console.log('Lawyer not found');
         return res.status(404).json({
           success: false,
           message: 'Lawyer not found'
@@ -224,6 +230,8 @@ export class CaseController {
 
       // Generate case number
       const lastCase = await Case.findOne().sort({ created_at: -1 });
+      console.log('Found last case:', lastCase);
+
       let caseNumber = 'CASE-001';
       
       if (lastCase && lastCase.case_number) {
@@ -248,6 +256,8 @@ export class CaseController {
 
       const savedCase = await newCase.save();
       
+      console.log('Saved new case:', savedCase);
+
       // Populate the saved case
       const populatedCase = await Case.findById(savedCase._id)
         .populate('client_id', 'first_name last_name email phone')
@@ -261,6 +271,8 @@ export class CaseController {
           client_id
         );
         
+        console.log('Notified lawyers about new case');
+
         // Also notify the specific assigned lawyer
         await NotificationService.createNotification({
           userId: lawyer_id,
@@ -275,6 +287,8 @@ export class CaseController {
           createdBy: client_id
         });
 
+        console.log('Notified assigned lawyer about new case');
+
         // Notify the client about case creation confirmation
         await NotificationService.createNotification({
           userId: client_id,
@@ -288,6 +302,9 @@ export class CaseController {
           metadata: { caseNumber: savedCase.case_number },
           createdBy: client_id
         });
+
+        console.log('Notified client about case creation');
+
       } catch (notificationError) {
         console.error('Failed to send case creation notifications:', notificationError);
       }

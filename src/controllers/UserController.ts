@@ -4,6 +4,7 @@ import {User} from "../models/user";
 import Blog from "../models/blog";
 import Case from "../models/case";
 import bcrypt from 'bcrypt';
+import { NotificationService } from '../services/notificationService';
 
 class UserController {
   static async updateUser(req: Request, res: Response) {
@@ -213,6 +214,48 @@ class UserController {
       };
 
       const newCase = await Case.create(caseData);
+
+      // Send notifications
+      try {
+        // Notify all lawyers about new case
+        await NotificationService.notifyNewCaseCreated(
+          newCase,
+          clientId
+        );
+        
+        console.log('Notified lawyers about new case');
+
+        // Also notify the specific assigned lawyer
+        await NotificationService.createNotification({
+          userId: newCase.lawyer_id,
+          type: 'case_created',
+          title: 'New Case Assigned',
+          message: `You have been assigned to case: ${newCase.title}`,
+          metadata: {
+            caseId: newCase._id,
+            caseNumber: newCase.case_number,
+            caseType: newCase.case_type
+          },
+          createdBy: clientId
+        });
+
+        console.log('Notified assigned lawyer about new case');
+
+        // Notify the client about case creation confirmation
+        await NotificationService.createNotification({
+          userId: clientId,
+          type: 'case_created',
+          title: 'Case Created Successfully',
+          message: `Your case "${newCase.title}" has been created and assigned to a lawyer.`,
+          metadata: { caseNumber: newCase.case_number },
+          createdBy: clientId
+        });
+
+        console.log('Notified client about case creation');
+
+      } catch (notificationError) {
+        console.error('Failed to send case creation notifications:', notificationError);
+      }
 
       return res.status(201).json({ success: true, case: newCase });
     } catch (error) {

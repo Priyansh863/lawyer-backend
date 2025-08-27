@@ -89,7 +89,9 @@ export default class DocumentController {
           
           // Send notification for document upload if public (after AI processing)
           try {
+            console.log('privacyprivacyprivacyprivacy',privacy)
             if (privacy === DocumentPrivacy.PUBLIC) {
+              console.log('Sending document upload notification for public document');
               await NotificationService.notifyDocumentUploaded(doc, user_id);
             }
           } catch (notificationError) {
