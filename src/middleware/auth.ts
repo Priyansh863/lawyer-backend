@@ -16,7 +16,9 @@ export const authenticateToken = async (
   next: NextFunction
 ) => {
   try {
-    const authHeader = req.headers["auth"] || req.headers["authorization"];
+    // Check for token in both 'auth' and 'authorization' headers
+    const authHeader = req.headers["authorization"] || req.headers["auth"];
+    
     if (!authHeader || typeof authHeader !== 'string') {
       return res.status(401).json({
         success: false,
@@ -25,7 +27,11 @@ export const authenticateToken = async (
       });
     }
 
-    const token = authHeader.split(" ")[1];
+    // Handle both 'Bearer token' and just 'token' formats
+    const token = authHeader.startsWith('Bearer ') 
+      ? authHeader.split(' ')[1] 
+      : authHeader;
+      
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -35,29 +41,51 @@ export const authenticateToken = async (
     }
 
     const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
-    const decoded = jwt.verify(token, dbData.jwtSecretKey) as { 
-      _id: string; 
-      account_type: string;
-    };
     
-    // Set user information in request object
-    req.user = {
-      userId: decoded._id,
-      role: decoded.account_type
-    };
+    // Add more detailed error handling for JWT verification
+    try {
+      const decoded = jwt.verify(token.trim(), dbData.jwtSecretKey) as { 
+        _id: string; 
+        email: string;
+        account_type: string;
+      };
+      
+      console.log('Successfully decoded token:', decoded);
+      
+      // Set user information in request object
+      req.user = {
+        userId: decoded._id,
+        role: decoded.account_type
+      };
 
-    // Also set legacy format for backward compatibility
-    req["id"] = decoded._id;
-    req["role"] = decoded.account_type;
-    req["token"] = token;
+      // Also set legacy format for backward compatibility
+      req["id"] = decoded._id;
+      req["role"] = decoded.account_type;
+      req["token"] = token;
 
-    next();
+      next();
+    } catch (jwtError) {
+      console.error("JWT Verification Error:", jwtError);
+      let errorMessage = "Invalid or expired token";
+      
+      if (jwtError.name === 'TokenExpiredError') {
+        errorMessage = "Your session has expired. Please login again.";
+      } else if (jwtError.name === 'JsonWebTokenError') {
+        errorMessage = "Invalid token format";
+      }
+      
+      return res.status(401).json({
+        success: false,
+        message: errorMessage,
+        error: jwtError.name || "token-verification-failed"
+      });
+    }
   } catch (error) {
-    console.log("Error in verifying auth token:", error);
-    return res.status(401).json({
+    console.error("Authentication error:", error);
+    return res.status(500).json({
       success: false,
-      message: "Your session has expired. Please login again.",
-      error: "token-expired"
+      message: "An error occurred during authentication",
+      error: "authentication-error"
     });
   }
 };

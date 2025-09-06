@@ -24,7 +24,7 @@ userRoute.get("/info/:id", UserController.getUserInfo);
 userRoute.get("/cases",Auth,UserController.getCases)
 
 // Route to get related users(clients or lawyers) based on the user's role
-userRoute.get("/users/related", Auth, UserController.getRelatedUsers);
+userRoute.get("/related", Auth, UserController.getRelatedUsers);
 
 // Create a new case
 userRoute.post("/CreateCases", Auth, UserController.createCase);

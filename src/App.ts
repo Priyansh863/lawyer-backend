@@ -41,7 +41,7 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
 app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/user", userRoute);
+app.use("/api/v1/users", userRoute);
 app.use("/api/v1/question", questionRoute);
 app.use("/api/v1/activity", activityRoute);
 
@@ -61,7 +61,7 @@ import placesRoute from "./routes/PlacesRoute";
 import adminDashboardRoute from "./routes/AdminDashboardRoute";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/meeting", meetingRoute);
-app.use("/api/v1/user", tokenRoute);
+app.use("/api/v1/users", tokenRoute);
 app.use("/api/v1/stripe", stripeRoute);
 app.use("/api/v1/blog", blogRoute);
 app.use("/api/v1/post", postRoute);
