@@ -34,6 +34,8 @@ export interface IUserSchema {
   notes?: string;
   updated_at?: Date;
   charges?: number;
+  chat_rate?: number;
+  video_rate?: number;
   experience?: string;
   pratice_area?: string;
   created_at?: Date;

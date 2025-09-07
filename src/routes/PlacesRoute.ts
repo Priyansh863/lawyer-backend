@@ -31,7 +31,15 @@ router.get('/details/:place_id', [
     .notEmpty()
     .withMessage('Place ID is required')
     .isLength({ min: 10, max: 200 })
-    .withMessage('Invalid place ID format')
+    .withMessage('Invalid place ID format'),
+  query('language')
+    .optional()
+    .isLength({ min: 2, max: 5 })
+    .withMessage('Language must be a valid language code'),
+  query('region')
+    .optional()
+    .isLength({ min: 2, max: 5 })
+    .withMessage('Region must be a valid region code')
 ], PlacesController.getPlaceDetails);
 
 export default router;

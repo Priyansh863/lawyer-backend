@@ -69,7 +69,7 @@ export default class MeetingController {
 
       // If client is creating meeting, check token balance and lawyer charges
       if (user.account_type === 'client') {
-        const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+        const lawyer = await User.findById(lawyerId).select('charges video_rate first_name last_name');
         if (!lawyer) {
           return res.status(404).json({
             success: false,
@@ -77,7 +77,7 @@ export default class MeetingController {
           });
         }
 
-        const requiredTokens = lawyer.charges || 0;
+        const requiredTokens = lawyer.video_rate || lawyer.charges || 0;
         if (requiredTokens > 0) {
           // Check client's token balance
           const clientTokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
@@ -88,6 +88,7 @@ export default class MeetingController {
               requiredTokens,
               currentBalance: clientTokenBalance?.current_balance || 0,
               lawyerCharges: lawyer.charges,
+              videoRate: lawyer.video_rate,
               lawyerName: `${lawyer.first_name} ${lawyer.last_name}`
             });
           }
@@ -123,8 +124,8 @@ export default class MeetingController {
       // If client created meeting and it's auto-approved (or if lawyer created), deduct tokens
       let tokenInfo = null;
       if (user.account_type === 'client' && status === EMeetingStatus.APPROVED) {
-        const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
-        const tokensToDeduct = lawyer?.charges || 0;
+        const lawyer = await User.findById(lawyerId).select('charges video_rate first_name last_name');
+        const tokensToDeduct = lawyer?.video_rate || lawyer?.charges || 0;
         
         if (tokensToDeduct > 0) {
           try {
@@ -151,7 +152,8 @@ export default class MeetingController {
             tokenInfo = {
               tokensDeducted: tokensToDeduct,
               remainingBalance: updatedBalance.current_balance,
-              lawyerCharges: lawyer.charges
+              lawyerCharges: lawyer.charges,
+              videoRate: lawyer.video_rate
             };
           } catch (tokenError: any) {
             // If token deduction fails, delete the created meeting
@@ -261,7 +263,7 @@ export default class MeetingController {
     
 
       // Get lawyer info for token deduction
-      const lawyer = await User.findById(meeting.lawyer_id).select('charges first_name last_name');
+      const lawyer = await User.findById(meeting.lawyer_id).select('charges video_rate first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
           success: false,
@@ -269,8 +271,8 @@ export default class MeetingController {
         });
       }
 
-      // Check if client has sufficient tokens before approving
-      const tokensRequired = lawyer.charges || 0;
+      // Check if client has sufficient tokens before approving (use video_rate for video consultations)
+      const tokensRequired = lawyer.video_rate || lawyer.charges || 0;
       let tokenInfo = null;
       
       if (tokensRequired > 0) {
@@ -309,7 +311,8 @@ export default class MeetingController {
           tokenInfo = {
             tokensDeducted: tokensRequired,
             remainingBalance: updatedBalance.current_balance,
-            lawyerCharges: lawyer.charges
+            lawyerCharges: lawyer.charges,
+            videoRate: lawyer.video_rate
           };
         } catch (tokenError: any) {
           return res.status(400).json({
@@ -495,7 +498,7 @@ export default class MeetingController {
       const meetings = await Meeting.find(query)
         .populate('lawyer_id', 'first_name last_name email account_type charges')
         .populate('client_id', 'first_name last_name email account_type')
-        .sort({ createdAt: -1 });
+        .sort({ _id: -1 });
 
       return res.status(200).json({
         success: true,

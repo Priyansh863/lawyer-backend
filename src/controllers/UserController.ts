@@ -7,6 +7,65 @@ import bcrypt from 'bcrypt';
 import { NotificationService } from '../services/notificationService';
 
 class UserController {
+  static async createUser(req: Request, res: Response) {
+    try {
+      const { first_name, last_name, email, phone, password, account_type } = req.body;
+
+      // Validate required fields
+      if (!first_name || !last_name || !email || !phone || !password) {
+        return res.status(200).json({
+          success: false,
+          message: 'All fields are required'
+        });
+      }
+
+      // Check if user already exists
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(200).json({
+          success: false,
+          message: 'User with this email already exists'
+        });
+      }
+
+      // Hash password
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+      // Create new user
+      const newUser = new User({
+        first_name,
+        last_name,
+        email,
+        phone,
+        password: hashedPassword,
+        account_type: account_type || 'client',
+        is_active: true,
+        is_verified: true, // Auto-verify for lawyer-created clients
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+
+      const savedUser = await newUser.save();
+
+      // Remove password from response
+      const userResponse = savedUser.toObject();
+      delete userResponse.password;
+
+      res.status(201).json({
+        success: true,
+        data: userResponse,
+        message: 'User created successfully'
+      });
+    } catch (error) {
+      console.error('Error creating user:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to create user'
+      });
+    }
+  }
+
   static async updateUser(req: Request, res: Response) {
     try {
       const userId = req.params.id;

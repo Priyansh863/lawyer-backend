@@ -6,32 +6,19 @@ export default class UserChargesController {
   /**
    * Update lawyer consultation charges
    * @param req.body.userId - User ID
-   * @param req.body.charges - Hourly consultation rate
+   * @param req.body.charges - General consultation rate (backward compatibility)
+   * @param req.body.chat_rate - Chat consultation rate
+   * @param req.body.video_rate - Video consultation rate
    */
   static async updateCharges(req: Request, res: Response) {
     try {
-      const { userId, charges } = req.body;
+      const { userId, charges, chat_rate, video_rate } = req.body;
 
       // Validate required fields
       if (!userId) {
         return res.status(400).json({
           success: false,
           message: "User ID is required"
-        });
-      }
-
-      if (charges === undefined || charges === null) {
-        return res.status(400).json({
-          success: false,
-          message: "Charges amount is required"
-        });
-      }
-
-      // Validate charges amount
-      if (charges < 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Charges cannot be negative"
         });
       }
 
@@ -52,10 +39,43 @@ export default class UserChargesController {
         });
       }
 
+      // Prepare update object
+      const updateData: any = {};
+      
+      if (charges !== undefined && charges !== null) {
+        if (charges < 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Charges cannot be negative"
+          });
+        }
+        updateData.charges = charges;
+      }
+
+      if (chat_rate !== undefined && chat_rate !== null) {
+        if (chat_rate < 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Chat rate cannot be negative"
+          });
+        }
+        updateData.chat_rate = chat_rate;
+      }
+
+      if (video_rate !== undefined && video_rate !== null) {
+        if (video_rate < 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Video rate cannot be negative"
+          });
+        }
+        updateData.video_rate = video_rate;
+      }
+
       // Update charges
       const updatedUser = await User.findByIdAndUpdate(
         userId,
-        { charges: charges },
+        updateData,
         { new: true, runValidators: true }
       ).select('-password -otp -otp_expires');
 
@@ -90,7 +110,7 @@ export default class UserChargesController {
       }
 
       const user = await User.findById(userId)
-        .select('first_name last_name account_type charges pratice_area experience');
+        .select('first_name last_name account_type charges chat_rate video_rate pratice_area experience');
 
       if (!user) {
         return res.status(404).json({
@@ -107,6 +127,8 @@ export default class UserChargesController {
           last_name: user.last_name,
           account_type: user.account_type,
           charges: user.charges || 0,
+          chat_rate: user.chat_rate || 0,
+          video_rate: user.video_rate || 0,
           pratice_area: user.pratice_area,
           experience: user.experience
         }
@@ -129,7 +151,7 @@ export default class UserChargesController {
     try {
       const lawyers = await User.find(
         { account_type: 'lawyer' },
-        'first_name last_name email profile_image pratice_area experience charges'
+        'first_name last_name email profile_image pratice_area experience charges chat_rate video_rate'
       ).sort({ first_name: 1 });
 
       return res.status(200).json({
@@ -142,7 +164,9 @@ export default class UserChargesController {
           profile_image: lawyer.profile_image,
           pratice_area: lawyer.pratice_area,
           experience: lawyer.experience,
-          charges: lawyer.charges || 0
+          charges: lawyer.charges || 0,
+          chat_rate: lawyer.chat_rate || 0,
+          video_rate: lawyer.video_rate || 0
         }))
       });
 
@@ -183,7 +207,7 @@ export default class UserChargesController {
       }
 
       // Get lawyer's charges
-      const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+      const lawyer = await User.findById(lawyerId).select('charges chat_rate video_rate first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
           success: false,
@@ -191,7 +215,15 @@ export default class UserChargesController {
         });
       }
 
-      const requiredTokens = lawyer.charges || 0;
+      // Determine required tokens based on consultation type
+      let requiredTokens = 0;
+      if (consultationType === 'chat') {
+        requiredTokens = lawyer.chat_rate || lawyer.charges || 0;
+      } else if (consultationType === 'video') {
+        requiredTokens = lawyer.video_rate || lawyer.charges || 0;
+      } else {
+        requiredTokens = lawyer.charges || 0;
+      }
       if (clientTokenBalance.current_balance < requiredTokens) {
         return res.status(200).json({
           success: false,
@@ -210,7 +242,11 @@ export default class UserChargesController {
         lawyerInfo: {
           _id: lawyer._id,
           name: `${lawyer.first_name} ${lawyer.last_name}`,
-          charges: lawyer.charges
+          charges: lawyer.charges,
+          chat_rate: lawyer.chat_rate,
+          video_rate: lawyer.video_rate,
+          consultationType: consultationType,
+          actualRate: requiredTokens
         }
       });
 
@@ -242,7 +278,7 @@ export default class UserChargesController {
       }
 
       // Get lawyer's charges
-      const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+      const lawyer = await User.findById(lawyerId).select('charges chat_rate video_rate first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
           success: false,
@@ -250,7 +286,15 @@ export default class UserChargesController {
         });
       }
 
-      const tokensToDeduct = lawyer.charges || 0;
+      // Determine tokens to deduct based on consultation type
+      let tokensToDeduct = 0;
+      if (consultationType === 'chat') {
+        tokensToDeduct = lawyer.chat_rate || lawyer.charges || 0;
+      } else if (consultationType === 'video') {
+        tokensToDeduct = lawyer.video_rate || lawyer.charges || 0;
+      } else {
+        tokensToDeduct = lawyer.charges || 0;
+      }
       if (tokensToDeduct <= 0) {
         return res.status(400).json({
           success: false,

@@ -84,7 +84,7 @@ class UserService {
   async getUserList(accountType, offset, limit) {
     try {
       const query = accountType ? { account_type: accountType } : {};
-      const users = await User.find(query)
+      const users = await User.find(query).sort({ created_at: -1 });
       return users;
     } catch (error) {
       throw new Error(error.message);

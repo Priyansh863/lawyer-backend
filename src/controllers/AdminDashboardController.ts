@@ -818,13 +818,13 @@ export default class AdminDashboardController {
 
       let updatedContent;
       
-      if (type === 'Blog') {
+      if (type.toLowerCase() === 'blog') {
         updatedContent = await Blog.findByIdAndUpdate(
           contentId,
           { status, updatedAt: new Date() },
           { new: true }
         );
-      } else if (type === 'AI Post') {
+      } else if (type.toLowerCase() === 'ai-post') {
         updatedContent = await Post.findByIdAndUpdate(
           contentId,
           { status, updatedAt: new Date() },

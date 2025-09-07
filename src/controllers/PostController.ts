@@ -198,6 +198,7 @@ class PostController {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const status = req.query.status as string;
+      const type = req.query.type as string;
     
 
       // Build filter object
@@ -206,14 +207,24 @@ class PostController {
       if (status && status!=='all') {
         filter.status = status;
       }
-      // Get posts with pagination
-      const posts = await Post.find({
+      let posts;
+      if(type==="dashboard"){
+        posts = await Post.find({
+          ...filter
+        })
+          .populate('author', 'first_name last_name email avatar')
+          .populate('citations.userId', 'first_name last_name email')
+          .sort({ createdAt: -1 })
+      }
+      else{
+      posts = await Post.find({
         author: req.user?.userId,
         ...filter
       })
         .populate('author', 'first_name last_name email avatar')
         .populate('citations.userId', 'first_name last_name email')
         .sort({ createdAt: -1 })
+      }
 
 
 

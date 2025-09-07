@@ -87,6 +87,18 @@ const UserSchema = new mongoose.Schema(
       required: false,
       default: 0,
       min: 0
+    },
+    chat_rate: {
+      type: Number,
+      required: false,
+      default: 0,
+      min: 0
+    },
+    video_rate: {
+      type: Number,
+      required: false,
+      default: 0,
+      min: 0
     }
   },
   {

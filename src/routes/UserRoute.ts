@@ -5,6 +5,9 @@ import { authenticateToken } from "../middleware/auth";
 
 const userRoute = express.Router();
 
+// Route to create a new user
+userRoute.post("/create", UserController.createUser);
+
 // Route to update user details
 userRoute.put("/update/:id", UserController.updateUser);
 

@@ -23,7 +23,25 @@ export class PlacesController {
       // Build Google Places API request
       const params = new URLSearchParams();
       params.set('query', query);
- 
+      
+      // Add language support (default to Korean if not specified)
+      if (language && typeof language === 'string') {
+        params.set('language', language);
+      } else {
+        params.set('language', 'ko'); // Default to Korean
+      }
+      
+      // Add region support for better Korean results
+      if (region && typeof region === 'string') {
+        params.set('region', region);
+      } else {
+        params.set('region', 'kr'); // Default to South Korea
+      }
+      
+      // Add type filter if specified
+      if (type && typeof type === 'string') {
+        params.set('type', type);
+      }
       
       // Get API key from Secrets Manager
       const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
@@ -85,6 +103,7 @@ export class PlacesController {
   static async getPlaceDetails(req: Request, res: Response) {
     try {
       const { place_id } = req.params;
+      const { language, region } = req.query;
 
       if (!place_id) {
         return res.status(400).json({
@@ -96,6 +115,21 @@ export class PlacesController {
       const params = new URLSearchParams();
       params.set('place_id', place_id);
       params.set('fields', 'name,formatted_address,geometry,types,place_id');
+      
+      // Add language support (default to Korean if not specified)
+      if (language && typeof language === 'string') {
+        params.set('language', language);
+      } else {
+        params.set('language', 'ko'); // Default to Korean
+      }
+      
+      // Add region support for better Korean results
+      if (region && typeof region === 'string') {
+        params.set('region', region);
+      } else {
+        params.set('region', 'kr'); // Default to South Korea
+      }
+      
       // Get API key from Secrets Manager
       const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
       params.set('key', dbData.googleApiKey);
