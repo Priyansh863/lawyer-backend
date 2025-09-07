@@ -104,17 +104,7 @@ class PostController {
         return;
       }
 
-      // Validate spatial info if provided
-      if (spatialInfo) {
-        const validationError = PostController.validateSpatialInfo(spatialInfo);
-        if (validationError) {
-          res.status(400).json({
-            success: false,
-            message: validationError
-          });
-          return;
-        }
-      }
+    
 
       // Validate citations if provided
       if (citations && Array.isArray(citations)) {
@@ -177,6 +167,7 @@ class PostController {
           customUrl: newPost.customUrl,
           shortUrl: newPost.shortUrl,
           qrCodeUrl: newPost.qrCodeUrl,
+          image: newPost.image,
           status: newPost.status,
           createdAt: newPost.createdAt,
           updatedAt: newPost.updatedAt
@@ -547,50 +538,6 @@ class PostController {
     }
   }
 
-  // Helper method to validate spatial info
-  private static validateSpatialInfo(spatialInfo: ISpatialInfo): string | null {
-    if (spatialInfo.latitude !== undefined) {
-      if (spatialInfo.latitude < -90 || spatialInfo.latitude > 90) {
-        return 'Latitude must be between -90 and 90';
-      }
-      const latDecimalPlaces = (spatialInfo.latitude.toString().split('.')[1] || '').length;
-      if (latDecimalPlaces < 5 || latDecimalPlaces > 7) {
-        return 'Latitude must have 5-7 decimal places';
-      }
-    }
-
-    if (spatialInfo.longitude !== undefined) {
-      if (spatialInfo.longitude < -180 || spatialInfo.longitude > 180) {
-        return 'Longitude must be between -180 and 180';
-      }
-      const lngDecimalPlaces = (spatialInfo.longitude.toString().split('.')[1] || '').length;
-      if (lngDecimalPlaces < 5 || lngDecimalPlaces > 7) {
-        return 'Longitude must have 5-7 decimal places';
-      }
-    }
-
-    if (spatialInfo.altitude !== undefined) {
-      if (spatialInfo.altitude < -500 || spatialInfo.altitude > 9000) {
-        return 'Altitude must be between -500 and 9000 meters';
-      }
-    }
-
-    if (spatialInfo.floor !== undefined) {
-      if (!Number.isInteger(spatialInfo.floor)) {
-        return 'Floor must be an integer';
-      }
-    }
-
-    if (spatialInfo.timestamp !== undefined) {
-      const timestamp = new Date(spatialInfo.timestamp);
-      if (isNaN(timestamp.getTime())) {
-        return 'Invalid timestamp format. Use ISO 8601 format';
-      }
-    }
-
-    return null;
-  }
-
   // Helper method to validate citations
   private static async validateCitation(citation: ICitation): Promise<string | null> {
     if (!citation.type || !['spatial', 'user', 'url'].includes(citation.type)) {
@@ -616,9 +563,7 @@ class PostController {
       }
     }
 
-    if (citation.type === 'spatial' && citation.spatialInfo) {
-      return PostController.validateSpatialInfo(citation.spatialInfo);
-    }
+
 
     return null;
   }
@@ -1033,17 +978,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
         counter++;
       }
 
-      // Validate spatial info if provided
-      if (spatialInfo) {
-        const validationError = PostController.validateSpatialInfo(spatialInfo);
-        if (validationError) {
-          res.status(400).json({
-            success: false,
-            message: validationError
-          });
-          return;
-        }
-      }
+    
 
       // Create new AI-generated post
       const newPost = new Post({
@@ -1094,6 +1029,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           customUrl: newPost.customUrl,
           shortUrl: newPost.shortUrl,
           qrCodeUrl: newPost.qrCodeUrl,
+          image: newPost.image,
           status: newPost.status,
           isAiGenerated: newPost.isAiGenerated,
           aiPrompt: newPost.aiPrompt,

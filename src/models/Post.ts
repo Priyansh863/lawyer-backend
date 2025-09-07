@@ -61,61 +61,22 @@ const SpatialInfoSchema: Schema = new Schema({
     type: Number,
     min: -90,
     max: 90,
-    validate: {
-      validator: function(v: number) {
-        if (v === null || v === undefined) return true;
-        // Validate 5-7 decimal places
-        const decimalPlaces = (v.toString().split('.')[1] || '').length;
-        return decimalPlaces >= 5 && decimalPlaces <= 7;
-      },
-      message: 'Latitude must have 5-7 decimal places'
-    }
   },
   longitude: {
     type: Number,
     min: -180,
     max: 180,
-    validate: {
-      validator: function(v: number) {
-        if (v === null || v === undefined) return true;
-        // Validate 5-7 decimal places
-        const decimalPlaces = (v.toString().split('.')[1] || '').length;
-        return decimalPlaces >= 5 && decimalPlaces <= 7;
-      },
-      message: 'Longitude must have 5-7 decimal places'
-    }
   },
   altitude: {
     type: Number,
     min: -500,
     max: 9000,
-    validate: {
-      validator: function(v: number) {
-        if (v === null || v === undefined) return true;
-        return Number.isFinite(v);
-      },
-      message: 'Altitude must be a valid number between -500 and 9000 meters'
-    }
   },
   timestamp: {
     type: Date,
-    validate: {
-      validator: function(v: Date) {
-        if (v === null || v === undefined) return true;
-        return v instanceof Date && !isNaN(v.getTime());
-      },
-      message: 'Timestamp must be a valid ISO 8601 date'
-    }
   },
   floor: {
     type: Number,
-    validate: {
-      validator: function(v: number) {
-        if (v === null || v === undefined) return true;
-        return Number.isInteger(v);
-      },
-      message: 'Floor must be an integer (use negative numbers for basement floors)'
-    }
   }
 }, { _id: false });
 
@@ -137,18 +98,6 @@ const CitationSchema: Schema = new Schema({
   },
   url: {
     type: String,
-    validate: {
-      validator: function(v: string) {
-        if (!v) return true;
-        try {
-          new URL(v);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      message: 'Invalid URL format'
-    }
   }
 }, { _id: false });
 
@@ -176,13 +125,6 @@ const PostSchema: Schema = new Schema({
     unique: true,
     lowercase: true,
     trim: true,
-    validate: {
-      validator: function(v: string) {
-        // Support Korean characters (가-힣), English letters, numbers, and hyphens
-        return /^[a-z0-9가-힣-]+$/.test(v);
-      },
-      message: 'Slug can only contain lowercase letters, Korean characters, numbers, and hyphens'
-    }
   },
   spatialInfo: SpatialInfoSchema,
   citations: [CitationSchema],
@@ -220,17 +162,6 @@ const PostSchema: Schema = new Schema({
       type: String,
       required: true,
       maxlength: 1000,
-      validate: {
-        validator: function(v: string) {
-          try {
-            new URL(v);
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        message: 'Invalid URL format'
-      }
     },
     description: {
       type: String,
@@ -278,10 +209,9 @@ PostSchema.index({ 'spatialInfo.latitude': 1, 'spatialInfo.longitude': 1 });
 
 // Pre-save middleware to generate URLs
 PostSchema.pre('save', function(next) {
-  if (this.isNew || this.isModified('title') || this.isModified('spatialInfo')) {
-    this.customUrl = this.generateCustomUrl();
-    this.shortUrl = this.generateShortUrl();
-  }
+  // Always regenerate URLs to ensure they use current slug format
+  this.customUrl = this.generateCustomUrl();
+  this.shortUrl = this.generateShortUrl();
   next();
 });
 
@@ -289,12 +219,14 @@ PostSchema.pre('save', function(next) {
 PostSchema.methods.generateCustomUrl = function(): string {
   // Use frontend URL for custom URLs
   const frontendUrl = process.env.FRONTEND_URL || process.env.frontendUrl || 'https://lawgg.net';
-  const params = new URLSearchParams();
   
-  // Always add post ID
-  params.append('id', this._id.toString());
+  // Base URL with post title (slug)
+  let url = `${frontendUrl}/${this.slug}`;
   
+  // Add spatial parameters if available
   if (this.spatialInfo && this.spatialInfo.latitude && this.spatialInfo.longitude) {
+    const params = new URLSearchParams();
+    
     if (this.spatialInfo.planet) params.append('planet', this.spatialInfo.planet);
     params.append('lat', this.spatialInfo.latitude.toString());
     params.append('lng', this.spatialInfo.longitude.toString());
@@ -310,15 +242,16 @@ PostSchema.methods.generateCustomUrl = function(): string {
     if (this.spatialInfo.floor !== null && this.spatialInfo.floor !== undefined) {
       params.append('floor', this.spatialInfo.floor.toString());
     }
+    
+    url += `?${params.toString()}`;
   }
   
-  // Use existing slug route for post view
-  return `${frontendUrl}/${this.slug}?${params.toString()}`;
+  return url;
 };
 
 PostSchema.methods.generateShortUrl = function(): string {
-  const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
-  let url = `${baseUrl}/l/${this.slug}`;
+  const frontendUrl = process.env.FRONTEND_URL || process.env.frontendUrl || 'https://lawgg.net';
+  let url = `${frontendUrl}/l/${this.slug}`;
   
   if (this.spatialInfo && this.spatialInfo.latitude && this.spatialInfo.longitude) {
     const parts = [
@@ -337,7 +270,8 @@ PostSchema.methods.generateShortUrl = function(): string {
 };
 
 PostSchema.methods.generateQrCodeUrl = function(): string {
-  return this.customUrl || this.shortUrl;
+  // Always generate fresh URL using current slug instead of stored URLs
+  return this.generateCustomUrl();
 };
 
 // Static methods

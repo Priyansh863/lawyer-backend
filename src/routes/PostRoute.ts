@@ -173,4 +173,13 @@ router.get('/slug/:slug', [
     .withMessage('Invalid slug format')
 ], PostController.getPostBySlug);
 
+// Handle short URL format /l/post-title
+router.get('/l/:slug', [
+  param('slug')
+    .notEmpty()
+    .withMessage('Post slug is required')
+    .matches(/^[a-z0-9가-힣-]+$/)
+    .withMessage('Invalid slug format')
+], PostController.getPostBySlug);
+
 export default router;

@@ -81,6 +81,28 @@ app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/places", placesRoute);
 app.use("/api/v1/admin", adminDashboardRoute);
 
+// Handle short URL redirects for posts
+app.get('/l/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const frontendUrl = process.env.FRONTEND_URL || process.env.frontendUrl || 'https://lawgg.net';
+    
+    // Redirect to frontend with the slug and any query parameters
+    const queryString = req.url.split('?')[1];
+    const redirectUrl = queryString 
+      ? `${frontendUrl}/${slug}?${queryString}`
+      : `${frontendUrl}/${slug}`;
+    
+    res.redirect(302, redirectUrl);
+  } catch (error) {
+    console.error('Short URL redirect error:', error);
+    res.status(404).json({
+      success: false,
+      message: 'Post not found'
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err.stack);
