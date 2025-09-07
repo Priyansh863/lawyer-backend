@@ -16,8 +16,12 @@ export const authenticateToken = async (
   next: NextFunction
 ) => {
   try {
+    // Get authorization header
     const authHeader = req.headers["auth"] || req.headers["authorization"];
+    
+    // Check if authorization header is present
     if (!authHeader || typeof authHeader !== 'string') {
+      console.log("No authorization header provided");
       return res.status(401).json({
         success: false,
         message: "No authorization header provided",
@@ -25,8 +29,12 @@ export const authenticateToken = async (
       });
     }
 
+    // Extract token from authorization header
     const token = authHeader.split(" ")[1];
+    
+    // Check if token is present
     if (!token) {
+      console.log("Invalid token format");
       return res.status(401).json({
         success: false,
         message: "Invalid token format",
@@ -34,7 +42,10 @@ export const authenticateToken = async (
       });
     }
 
+    // Get secret key from secret manager
     const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+    
+    // Decode token
     const decoded = jwt.verify(token, dbData.jwtSecretKey) as { 
       _id: string; 
       account_type: string;
@@ -51,6 +62,7 @@ export const authenticateToken = async (
     req["role"] = decoded.account_type;
     req["token"] = token;
 
+    // Move to next middleware
     next();
   } catch (error) {
     console.log("Error in verifying auth token:", error);

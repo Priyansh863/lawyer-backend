@@ -59,6 +59,8 @@ import userChargesRoute from "./routes/UserChargesRoute";
 import notificationRoutes from "./routes/notificationRoutes";
 import placesRoute from "./routes/PlacesRoute";
 import adminDashboardRoute from "./routes/AdminDashboardRoute";
+import bookmarkRoute from "./routes/BookmarkRoute";
+import reportRoute from "./routes/ReportRoute";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/meeting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
@@ -80,6 +82,8 @@ app.use("/api/v1/charges", userChargesRoute);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/places", placesRoute);
 app.use("/api/v1/admin", adminDashboardRoute);
+app.use("/api/v1/bookmark", bookmarkRoute);
+app.use("/api/v1/report", reportRoute);
 
 // Handle short URL redirects for posts
 app.get('/l/:slug', async (req, res) => {

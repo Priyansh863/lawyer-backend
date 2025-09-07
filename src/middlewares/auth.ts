@@ -9,6 +9,7 @@ import dbConfig from "../config/secretManagerConfig";
 const Auth = async (request: Request, response: Response, next: NextFunction) => {
   try {
     const authHeader = request.headers["auth"] || request.headers["authorization"];
+    console.log("Auth header ", authHeader);
     if (!authHeader || typeof authHeader !== 'string') {
       throw new Error('No authorization header');
     }
