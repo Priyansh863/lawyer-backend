@@ -96,10 +96,10 @@ export class AIReporterCronService {
 
       console.log(`Daily articles count for AI Reporter ${aiReporterId}: ${todayArticlesCount}`);
 
-      if (todayArticlesCount >= settings.maxArticlesPerDay) {
-        console.log(`Daily limit reached for AI Reporter ${aiReporterId}`);
-        return;
-      }
+      // if (todayArticlesCount >= settings.maxArticlesPerDay) {
+      //   console.log(`Daily limit reached for AI Reporter ${aiReporterId}`);
+      //   return;
+      // }
 
       // Get recent posts from followed lawyers
       const recentPosts = await Post.find({
@@ -127,40 +127,74 @@ export class AIReporterCronService {
 
       // Generate article using OpenAI
       const prompt = `
-        As a legal AI reporter, analyze the following recent legal content and create a comprehensive article:
-        
-        Source Content:
-        ${JSON.stringify(sourceContent, null, 2)}
-        
-        Target Legal Fields: ${settings.legalFields.join(', ')}
-        Target Tags: ${settings.targetTags.join(', ')}
-        
-        Please create:
-        1. A compelling title (max 100 characters)
-        2. A VERY COMPREHENSIVE article (minimum 2000-3000 words) that:
-           - Provides extensive legal analysis and insights from the source content
-           - Includes detailed background information and context
-           - Covers multiple perspectives and detailed case studies
-           - Uses professional legal terminology and in-depth explanations
-           - Includes practical implications and step-by-step guidance
-           - Covers potential challenges, solutions, and best practices
-           - Maintains objectivity and accuracy with thorough analysis
-           - Structures content with clear sections: Introduction, Main Analysis, Practical Applications, Challenges & Solutions, Best Practices, Conclusion
-        3. Relevant hashtags (8-12 tags)
-        4. Choose the most relevant legal field from these valid options: Family Law, Property Law, Criminal Law, Corporate Law, Labor Law, Tax Law, Intellectual Property, Immigration
-        5. ALWAYS include 4-6 relevant reference links that directly relate to the article content and provide additional authoritative legal resources
-        6. A comprehensive summary (150-200 words)
-        
-        Format your response as JSON with no code fence and code blocks:
-        {
-          "title": "Article title",
-          "content": "VERY LONG and comprehensive article content with proper HTML formatting including headings, paragraphs, lists, and emphasis",
-          "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8"],
-          "legalField": "Family Law",
-          "summary": "Comprehensive summary of the article",
-          "referenceLinks": ["https://relevant-legal-resource1.com", "https://relevant-legal-resource2.com", "https://relevant-legal-resource3.com", "https://relevant-legal-resource4.com"]
-        }
+      As a legal AI reporter, analyze the following recent legal content and create a comprehensive, well-designed HTML article with optional images and authoritative links.
+      
+      Source Content:
+      ${JSON.stringify(sourceContent, null, 2)}
+      
+      Target Legal Fields: ${settings.legalFields.join(', ')}
+      Target Tags: ${settings.targetTags.join(', ')}
+      
+      REQUIREMENTS
+      1) Title
+         - A compelling title (max 100 characters).
+      
+      2) Article (VERY COMPREHENSIVE: 2,000–3,000 words) with GOOD HTML DESIGN
+         - Use semantic HTML: <article>, <header>, <section>, <h1–h3>, <p>, <ul>/<ol>, <blockquote>, <table>, <aside>, <footer>.
+         - Add a Table of Contents at the top with anchor links (<nav> with <a href="#section-id">).
+         - Clear sections with IDs: #introduction, #main-analysis, #practical-applications, #challenges-solutions, #best-practices, #conclusion, #faq.
+         - Include professional legal terminology, multiple perspectives, case studies, practical implications, challenges/solutions, best practices, and FAQs.
+      
+      3) IMAGES (OPTIONAL, ONLY IF AVAILABLE)
+         - Use 3–5 **real, publicly accessible, royalty-free or official images** (Unsplash, Wikimedia Commons, Pexels, or official court/government sites).
+         - DO NOT insert <img> tags if no reliable image is available. Skip instead of leaving blank space.
+         - Every <img> must be inside a <figure> with:
+             <img src="https://..." alt="descriptive alt" loading="lazy" style="max-width:100%;height:auto;border-radius:12px;">
+             <figcaption>Short caption with <a href="https://..." target="_blank" rel="noopener noreferrer">Source</a></figcaption>
+         - Images should appear only where they enhance understanding and always accompany related text.
+      
+      4) LINKS (MANDATORY)
+         - Throughout the article, add contextual hyperlinks to authoritative legal resources (court opinions, statutes, journals, government sites).
+         - All <a> tags must include target="_blank" rel="noopener noreferrer".
+         - Anchor text must be meaningful (no “click here”).
+      
+      5) References
+         - ALWAYS include 4–6 relevant reference links that directly support the analysis.
+      
+      6) Tags
+         - 8–12 relevant hashtags.
+      
+      7) Legal Field
+         - Choose the most relevant legal field from: Family Law, Property Law, Criminal Law, Corporate Law, Labor Law, Tax Law, Intellectual Property, Immigration.
+      
+      8) Summary
+         - 150–200 words, objective and comprehensive.
+      
+      9) OUTPUT FORMAT
+      Return valid JSON (no code fences), exactly this shape:
+      {
+        "title": "Article title",
+        "content": "<article> ... FULL HTML with headings, TOC, optional figures/images (ONLY if valid), tables, lists, blockquotes, and professional layout ... </article>",
+        "tags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8"],
+        "legalField": "Family Law",
+        "summary": "150–200 word summary...",
+        "referenceLinks": [
+          "https://authoritative-legal-resource-1.example",
+          "https://authoritative-legal-resource-2.example",
+          "https://authoritative-legal-resource-3.example",
+          "https://authoritative-legal-resource-4.example"
+        ]
+      }
+      
+      STYLE RULES
+      - Only insert <figure> if a real image with valid URL is found.
+      - Do NOT leave empty <img> or figcaption placeholders.
+      - Keep spacing tight (no large blank gaps).
+      - Ensure JSON is valid and the "content" field contains complete HTML with no broken or missing tags.
+      - No code blocks,code fence or markdown; only JSON.
       `;
+      
+      
 
        const dbData = await dbConfig.secretManagerConnection();
 
