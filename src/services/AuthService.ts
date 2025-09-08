@@ -111,14 +111,19 @@ class AuthServices {
    * Admin Login
    */
   async adminLogin(data: LoginData) {
+    console.log("Admin Login data:>>>>>>>>>>>>>>>", data);
     const { email, password } = data;
     const query = { email: email.toLowerCase() };
 
-    console.log("Admin Login data:>>>>>>>>>>>>>>>", data);
+    console.log("Admin Login data:>>>>>>>>>>>>>>>", query);
     
     // Find user
     const userInfo = await User.findOne(query);
     console.log("Admin Login userInfo:>>>>>>>>>>>>>>>", userInfo);
+
+    if (!userInfo) {
+      return { success: false, message: "user_not_found" };
+    }
 
     // Verify password
     if (await bcrypt.compare(password.trim(), userInfo.password as string)) {

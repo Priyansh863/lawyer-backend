@@ -121,8 +121,8 @@ const PostSchema: Schema = new Schema({
   },
   slug: {
     type: String,
-    required: true,
-    unique: true,
+    required: false,
+    unique: false,
     lowercase: true,
     trim: true,
   },

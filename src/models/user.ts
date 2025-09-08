@@ -7,6 +7,7 @@ enum EAccountType {
   Admin = 'admin',
   lawyer = 'lawyer',
   client = 'client',
+  ai_reporter = 'ai_reporter',
 }
 
 const UserSchema = new mongoose.Schema(

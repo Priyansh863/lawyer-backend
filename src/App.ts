@@ -61,6 +61,8 @@ import placesRoute from "./routes/PlacesRoute";
 import adminDashboardRoute from "./routes/AdminDashboardRoute";
 import bookmarkRoute from "./routes/BookmarkRoute";
 import reportRoute from "./routes/ReportRoute";
+import aiReporterRoute from "./routes/AIReporterRoute";
+import { AIReporterCronService } from "./services/AIReporterCronService";
 app.use("/api/v1/document", documentRoute);
 app.use("/api/v1/meeting", meetingRoute);
 app.use("/api/v1/user", tokenRoute);
@@ -84,6 +86,7 @@ app.use("/api/v1/places", placesRoute);
 app.use("/api/v1/admin", adminDashboardRoute);
 app.use("/api/v1/bookmark", bookmarkRoute);
 app.use("/api/v1/report", reportRoute);
+app.use("/api/v1/ai-reporter", aiReporterRoute);
 
 // Handle short URL redirects for posts
 app.get('/l/:slug', async (req, res) => {
@@ -119,13 +122,19 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Initialize server after DB connection is established
 let server: any;
 
-dbConnection.then(() => {
+dbConnection.then(async () => {
   // Initialize Socket.IO service
   socketService = new SocketService(httpServer);
+
+
+  // Initialize AI Reporter cron jobs
+  AIReporterCronService.initializeCronJobs();
+  AIReporterCronService.initializeArchiveCleanup();
   
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Server is running on http://0.0.0.0:${port}`);
     console.log(`Socket.IO server initialized`);
+    console.log(`AI Reporter cron service initialized`);
   });
   
   server = awsServerlessExpress.createServer(app);
