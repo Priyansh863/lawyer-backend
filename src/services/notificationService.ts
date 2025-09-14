@@ -4,8 +4,10 @@ import mongoose from 'mongoose';
 export interface CreateNotificationData {
   userId: mongoose.Types.ObjectId | string;
   title: string;
+  titleKo?: string;
   message: string;
-  type: 'case_created' | 'case_status_changed' | 'document_uploaded' | 'chat_started' | 'video_consultation_started' | 'qa_question_posted' | 'qa_answer_posted' | 'general';
+  messageKo?: string;
+  type: 'case_created' | 'case_status_changed' | 'document_uploaded' | 'chat_started' | 'chat_message' | 'video_consultation_started' | 'qa_question_posted' | 'qa_answer_posted' | 'general';
   relatedId?: mongoose.Types.ObjectId | string;
   relatedType?: 'case' | 'document' | 'chat' | 'meeting' | 'qa_question' | 'qa_answer';
   redirectUrl?: string;
@@ -21,7 +23,9 @@ export class NotificationService {
       const notification = new Notification({
         userId: data.userId,
         title: data.title,
+        titleKo: data.titleKo,
         message: data.message,
+        messageKo: data.messageKo,
         type: data.type,
         relatedId: data.relatedId,
         relatedType: data.relatedType,
@@ -34,6 +38,7 @@ export class NotificationService {
       console.log('Notification created successfully:', notification);
 
       await notification.save();
+
       return notification;
     } catch (error) {
       console.error('Error creating notification:', error);
@@ -48,7 +53,9 @@ export class NotificationService {
       const notifications = userIds.map(userId => ({
         userId,
         title: data.title,
+        titleKo: data.titleKo,
         message: data.message,
+        messageKo: data.messageKo,
         type: data.type,
         relatedId: data.relatedId,
         relatedType: data.relatedType,
@@ -77,7 +84,9 @@ export class NotificationService {
 
       await this.createBulkNotifications(lawyerIds, {
         title: 'New Case Created',
+        titleKo: '새 사건 생성됨',
         message: `A new case "${caseData.title}" has been created by a client.`,
+        messageKo: `고객이 새 사건 "${caseData.title}"을(를) 생성했습니다.`,
         type: 'case_created',
         relatedId: caseData._id,
         relatedType: 'case',
@@ -102,7 +111,9 @@ export class NotificationService {
 
       await this.createBulkNotifications(userIds, {
         title: 'Case Status Updated',
+        titleKo: '사건 상태 업데이트됨',
         message: `Case "${caseData.title}" status has been changed to "${newStatus}".`,
+        messageKo: `사건 "${caseData.title}"의 상태가 "${newStatus}"(으)로 변경되었습니다.`,
         type: 'case_status_changed',
         relatedId: caseData._id,
         relatedType: 'case',
@@ -129,7 +140,9 @@ export class NotificationService {
 
         await this.createBulkNotifications(userIds, {
           title: 'New Public Document',
+          titleKo: '새 공개 문서',
           message: `A new public document has been uploaded.`,
+          messageKo: `새 공개 문서가 업로드되었습니다.`,
           type: 'document_uploaded',
           relatedId: documentData._id,
           relatedType: 'document',
@@ -155,7 +168,9 @@ export class NotificationService {
       await this.createNotification({
         userId: otherUserId,
         title: 'New Chat Started',
+        titleKo: '새 채팅 시작됨',
         message: `A new chat conversation has been started with you.`,
+        messageKo: `새로운 채팅 대화가 시작되었습니다.`,
         type: 'chat_started',
         relatedId: chatData._id,
         relatedType: 'chat',
@@ -178,7 +193,9 @@ export class NotificationService {
       await this.createNotification({
         userId: otherUserId,
         title: 'Video Consultation Started',
+        titleKo: '화상 상담 시작됨',
         message: `A video consultation has been started. Join now!`,
+        messageKo: `화상 상담이 시작되었습니다. 지금 참여하세요!`,
         type: 'video_consultation_started',
         relatedId: meetingData._id,
         relatedType: 'meeting',
@@ -204,7 +221,9 @@ export class NotificationService {
 
       await this.createBulkNotifications(lawyerIds, {
         title: 'New Q&A Question',
+        titleKo: '새 질문답변 질문',
         message: `A new question has been posted:`,
+        messageKo: `새 질문이 게시되었습니다:`,
         type: 'qa_question_posted',
         relatedId: questionData._id,
         relatedType: 'qa_question',
@@ -225,7 +244,9 @@ export class NotificationService {
         await this.createNotification({
           userId: questionData.user_id,
           title: 'Your Question Was Answered',
+          titleKo: '질문에 답변이 달렸습니다',
           message: `Your question "${questionData.title}" has received a new answer.`,
+          messageKo: `귀하의 질문 "${questionData.title}"에 새로운 답변이 달렸습니다.`,
           type: 'qa_answer_posted',
           relatedId: questionData._id,
           relatedType: 'qa_answer',
@@ -237,6 +258,38 @@ export class NotificationService {
       }
     } catch (error) {
       console.error('Error notifying Q&A answer posted:', error);
+    }
+  }
+
+  // Notify new message in chat
+  static async notifyNewMessage(messageData: any, recipientId: mongoose.Types.ObjectId | string, senderId: mongoose.Types.ObjectId | string) {
+    try {
+      const senderName = messageData.senderId ? 
+        `${messageData.senderId.first_name} ${messageData.senderId.last_name}` : 
+        'Someone';
+      
+      // Create notification for the recipient
+      await this.createNotification({
+        userId: recipientId,
+        title: 'New Message',
+        titleKo: '새 메시지',
+        message: `${senderName} sent you a message: "${messageData.content.substring(0, 50)}${messageData.content.length > 50 ? '...' : ''}"`,
+        messageKo: `${senderName}님이 메시지를 보냈습니다: "${messageData.content.substring(0, 50)}${messageData.content.length > 50 ? '...' : ''}"`,
+        type: 'chat_message',
+        relatedId: messageData.chatId,
+        relatedType: 'chat',
+        redirectUrl: `/chat/${messageData.chatId}`,
+        priority: 'medium',
+        metadata: { 
+          senderId: senderId,
+          senderName: senderName,
+          messageType: messageData.messageType,
+          messageId: messageData._id
+        },
+        createdBy: senderId
+      });
+    } catch (error) {
+      console.error('Error notifying new message:', error);
     }
   }
 }

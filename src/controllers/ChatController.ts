@@ -352,6 +352,15 @@ class ChatController {
         updatedAt: new Date()
       });
 
+      // Send notification to the other participant (not the sender)
+      try {
+        const otherParticipantId = chat.lawyer_id.toString() === userId ? chat.client_id.toString() : chat.lawyer_id.toString();
+        await NotificationService.notifyNewMessage(newMessage, otherParticipantId, userId);
+      } catch (notificationError) {
+        console.error('Failed to send message notification:', notificationError);
+        // Don't fail the message sending if notification fails
+      }
+
       res.status(201).json({
         success: true,
         message: 'Message sent successfully',

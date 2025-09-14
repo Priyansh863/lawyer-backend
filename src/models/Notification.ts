@@ -3,7 +3,9 @@ import mongoose from 'mongoose';
 interface INotification extends mongoose.Document {
   userId: mongoose.Types.ObjectId;
   title: string;
+  titleKo?: string;
   message: string;
+  messageKo?: string;
   type: string;
   relatedId?: mongoose.Types.ObjectId;
   relatedType?: string;
@@ -32,9 +34,19 @@ const notificationSchema = new mongoose.Schema({
     required: true,
     maxlength: 200
   },
+  titleKo: {
+    type: String,
+    required: false,
+    maxlength: 200
+  },
   message: {
     type: String,
     required: true,
+    maxlength: 500
+  },
+  messageKo: {
+    type: String,
+    required: false,
     maxlength: 500
   },
   type: {

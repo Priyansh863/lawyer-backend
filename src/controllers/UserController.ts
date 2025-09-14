@@ -506,8 +506,7 @@ class UserController {
 static async getLawyers(req: Request, res: Response) {
   try {
     const lawyers = await User.find(
-      { account_type: 'lawyer' },
-      'first_name last_name email account_type'
+      { account_type: 'lawyer' }
     ).sort({ first_name: 1 });
 
     res.json({

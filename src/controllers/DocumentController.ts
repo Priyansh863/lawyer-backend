@@ -27,7 +27,8 @@ export default class DocumentController {
         privacy, 
         process_with_ai,
         file_size,
-        case_id 
+        case_id,
+        associated_user_id
       } = req.body;
       
       // Validate required fields
@@ -63,7 +64,7 @@ export default class DocumentController {
       // Prepare document data
       const documentData: any = {
         document_name: document_name,
-        status: "Pending",
+        status: "Completed",
         uploaded_by: user_id,
         link: link,
         file_type: file_type || fileTypeDisplay,
@@ -79,6 +80,22 @@ export default class DocumentController {
       
       // Save to MongoDB
       const doc = await UserDocument.create(documentData);
+
+      if (associated_user_id) {
+          const documentData: any = {
+        document_name: document_name,
+        status: "Pending",
+        uploaded_by: associated_user_id,
+        link: link,
+        file_type: file_type || fileTypeDisplay,
+        document_type: 'general', // Always general, no user selection
+        privacy: privacy || 'public',
+        file_size: file_size
+      };
+        await UserDocument.create(documentData);
+      }
+
+      
 
       console.log(`Processing ${fileTypeDisplay} document: ${doc._id}`);
       
