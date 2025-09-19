@@ -46,6 +46,19 @@ export interface IMeeting extends Document {
   updated_at: Date;
   is_upcoming: boolean;
   is_in_progress: boolean;
+  
+  // New fields for custom rates and scheduling
+  consultation_type: 'free' | 'paid';
+  hourly_rate: number;
+  custom_fee: boolean;
+  requested_date: Date;
+  requested_time: string;
+  scheduled_date?: Date;
+  scheduled_time?: string;
+  
+  // Compatibility aliases for frontend
+  date?: Date;
+  time?: string;
 }
 
 const MeetingSchema: Schema = new Schema(
@@ -62,11 +75,34 @@ const MeetingSchema: Schema = new Schema(
       required: true,
       index: true
     },
+    meeting_title: {
+      type: String,
+      trim: true,
+      default: 'Video Consultation'
+    },
+    meeting_description: {
+      type: String,
+      trim: true
+    },
     meeting_type: {
       type: String,
       enum: Object.values(EMeetingType),
       required: true,
       default: EMeetingType.VIDEO
+    },
+    start_time: {
+      type: Date
+    },
+    end_time: {
+      type: Date
+    },
+    duration_minutes: {
+      type: Number,
+      default: 60
+    },
+    timezone: {
+      type: String,
+      default: 'UTC'
     },
     meeting_link: {
       type: String,
@@ -82,6 +118,84 @@ const MeetingSchema: Schema = new Schema(
       required: true,
       default: EMeetingStatus.PENDING_APPROVAL,
       index: true
+    },
+    initiated_by: {
+      type: String,
+      enum: ['lawyer', 'client'],
+      required: true
+    },
+    approved_by: {
+      type: Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    approved_at: {
+      type: Date
+    },
+    rejection_reason: {
+      type: String,
+      trim: true
+    },
+    cancellation_reason: {
+      type: String,
+      trim: true
+    },
+    notes: {
+      type: String,
+      trim: true
+    },
+    reminder_sent: {
+      type: Boolean,
+      default: false
+    },
+    reminder_sent_at: {
+      type: Date
+    },
+    case_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'Case'
+    },
+    agenda_items: [{
+      type: String,
+      trim: true
+    }],
+    created_by: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    updated_by: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    
+    // New fields for custom rates and scheduling
+    consultation_type: {
+      type: String,
+      enum: ['free', 'paid'],
+      default: 'paid'
+    },
+    hourly_rate: {
+      type: Number,
+      default: 0
+    },
+    custom_fee: {
+      type: Boolean,
+      default: false
+    },
+    requested_date: {
+      type: Date,
+      required: true
+    },
+    requested_time: {
+      type: String,
+      required: true
+    },
+    scheduled_date: {
+      type: Date
+    },
+    scheduled_time: {
+      type: String
     },
   },
   {
@@ -99,6 +213,8 @@ MeetingSchema.index({ lawyer_id: 1, status: 1 });
 MeetingSchema.index({ client_id: 1, status: 1 });
 MeetingSchema.index({ start_time: 1 });
 MeetingSchema.index({ end_time: 1 });
+MeetingSchema.index({ requested_date: 1 });
+MeetingSchema.index({ consultation_type: 1 });
 MeetingSchema.index({ created_at: -1 });
 
 // Virtual for checking if meeting is upcoming
@@ -112,6 +228,16 @@ MeetingSchema.virtual('is_in_progress').get(function(this: IMeeting) {
   return this.status === EMeetingStatus.APPROVED && 
          this.start_time <= now && 
          this.end_time >= now;
+});
+
+// Virtual field for date alias (compatibility with frontend)
+MeetingSchema.virtual('date').get(function(this: IMeeting) {
+  return this.requested_date || this.scheduled_date;
+});
+
+// Virtual field for time alias (compatibility with frontend)
+MeetingSchema.virtual('time').get(function(this: IMeeting) {
+  return this.requested_time || this.scheduled_time;
 });
 
 // Pre-save hook to update status and handle workflow
@@ -176,6 +302,33 @@ MeetingSchema.methods.cancel = function(cancelledBy: mongoose.Types.ObjectId, re
   this.status = EMeetingStatus.CANCELLED;
   this.cancellation_reason = reason;
   this.updated_by = cancelledBy;
+  return this.save();
+};
+
+// Add method to update meeting details
+MeetingSchema.methods.updateDetails = function(updatedBy: mongoose.Types.ObjectId, updateData: any) {
+  // Allow updating specific fields
+  const allowedUpdates = [
+    'meeting_title',
+    'meeting_description', 
+    'requested_date',
+    'requested_time',
+    'scheduled_date', 
+    'scheduled_time',
+    'consultation_type',
+    'hourly_rate',
+    'custom_fee',
+    'meeting_link',
+    'notes'
+  ];
+  
+  allowedUpdates.forEach(field => {
+    if (updateData.hasOwnProperty(field)) {
+      this[field] = updateData[field];
+    }
+  });
+  
+  this.updated_by = updatedBy;
   return this.save();
 };
 

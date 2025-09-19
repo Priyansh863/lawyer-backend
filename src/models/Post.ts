@@ -337,7 +337,8 @@ PostSchema.methods.generateShortUrl = function(): string {
 };
 
 PostSchema.methods.generateQrCodeUrl = function(): string {
-  return this.customUrl || this.shortUrl;
+  // Use the custom URL for QR code as it contains more information
+  return this.generateCustomUrl();
 };
 
 // Static methods
