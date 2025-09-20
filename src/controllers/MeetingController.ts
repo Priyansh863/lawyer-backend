@@ -53,10 +53,26 @@ export default class MeetingController {
       const { 
         clientId, 
         lawyerId, 
-        meetingLink, 
+        meetingLink,
+        meeting_title,
+        meeting_description,
+        requested_date,
+        requested_time,
+        consultation_type = 'paid',
+        hourly_rate,
+        custom_fee = false,
+        meeting_type = 'video'
       } = req.body;
       
       const userId = (req as any).user?.userId || (req as any).user?._id;
+
+      // Validate required fields
+      if (!clientId || !lawyerId || !requested_date || !requested_time) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing required fields: clientId, lawyerId, requested_date, requested_time"
+        });
+      }
 
       const user = await User.findById(userId).select('first_name last_name email account_type');
 
@@ -67,31 +83,39 @@ export default class MeetingController {
         });
       }
 
-      // If client is creating meeting, check token balance and lawyer charges
-      if (user.account_type === 'client') {
-        const lawyer = await User.findById(lawyerId).select('charges video_rate first_name last_name');
-        if (!lawyer) {
-          return res.status(404).json({
-            success: false,
-            message: "Lawyer not found"
-          });
-        }
+      // Determine the actual rate to use
+      const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+      if (!lawyer) {
+        return res.status(404).json({
+          success: false,
+          message: "Lawyer not found"
+        });
+      }
 
-        const requiredTokens = lawyer.video_rate || lawyer.charges || 0;
-        if (requiredTokens > 0) {
-          // Check client's token balance
-          const clientTokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
-          if (!clientTokenBalance || clientTokenBalance.current_balance < requiredTokens) {
-            return res.status(200).json({
-              success: false,
-              message: `Insufficient tokens for video meeting. Required: ${requiredTokens}, Available: ${clientTokenBalance?.current_balance || 0}`,
-              requiredTokens,
-              currentBalance: clientTokenBalance?.current_balance || 0,
-              lawyerCharges: lawyer.charges,
-              videoRate: lawyer.video_rate,
-              lawyerName: `${lawyer.first_name} ${lawyer.last_name}`
-            });
-          }
+      let actualRate = 0;
+      if (consultation_type === 'free') {
+        actualRate = 0;
+      } else if (custom_fee && hourly_rate !== undefined) {
+        actualRate = hourly_rate;
+      } else {
+        // Use lawyer's default rate
+        actualRate = lawyer.charges || 0;
+      }
+
+      // If client is creating meeting, check token balance for paid consultations
+      if (user.account_type === 'client' && consultation_type === 'paid' && actualRate > 0) {
+        // Check client's token balance
+        const clientTokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
+        if (!clientTokenBalance || clientTokenBalance.current_balance < actualRate) {
+          return res.status(200).json({
+            success: false,
+            message: `Insufficient tokens for video meeting. Required: ${actualRate}, Available: ${clientTokenBalance?.current_balance || 0}`,
+            requiredTokens: actualRate,
+            currentBalance: clientTokenBalance?.current_balance || 0,
+            lawyerCharges: lawyer.charges,
+            customRate: custom_fee ? hourly_rate : null,
+            lawyerName: `${lawyer.first_name} ${lawyer.last_name}`
+          });
         }
       }
 
@@ -116,44 +140,56 @@ export default class MeetingController {
       const meeting = await Meeting.create({
         lawyer_id: lawyerId,
         client_id: clientId,
+        meeting_title: meeting_title || 'Video Consultation',
+        meeting_description: meeting_description || '',
+        meeting_type: meeting_type || 'video',
         meeting_link: meetingLink || '',
         status: status,
-        approval_date: approval_date,
+        approved_at: approval_date,
+        initiated_by: user.account_type,
+        consultation_type: consultation_type,
+        hourly_rate: actualRate,
+        custom_fee: custom_fee,
+        requested_date: new Date(requested_date),
+        requested_time: requested_time,
+        created_by: userId,
+        updated_by: userId,
+        timezone: 'UTC',
+        duration_minutes: 60
       });
 
       // If client created meeting and it's auto-approved (or if lawyer created), deduct tokens
       let tokenInfo = null;
-      if (user.account_type === 'client' && status === EMeetingStatus.APPROVED) {
-        const lawyer = await User.findById(lawyerId).select('charges video_rate first_name last_name');
-        const tokensToDeduct = lawyer?.video_rate || lawyer?.charges || 0;
-        
-        if (tokensToDeduct > 0) {
+      if (user.account_type === 'client' && status === EMeetingStatus.APPROVED && consultation_type === 'paid' && actualRate > 0) {
+        if (actualRate > 0) {
           try {
             // Deduct tokens from client's balance
-            const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, tokensToDeduct);
+            const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, actualRate);
             
             // Create transaction record
             await TokenTransaction.create({
               user_id: clientId,
               type: ETransactionType.usage,
-              amount: -tokensToDeduct,
-              description: `Video meeting scheduled with ${lawyer.first_name} ${lawyer.last_name}`,
+              amount: -actualRate,
+              description: `${consultation_type === 'free' ? 'Free' : 'Video'} meeting scheduled with ${lawyer.first_name} ${lawyer.last_name}${custom_fee ? ' (Custom Rate)' : ''}`,
               category: 'Video Consultation',
               status: ETransactionStatus.completed,
               reference_id: meeting._id.toString(),
               metadata: {
                 lawyerId: lawyerId,
                 lawyerName: `${lawyer.first_name} ${lawyer.last_name}`,
-                consultationType: 'video',
+                consultationType: consultation_type,
+                customRate: custom_fee,
+                hourlyRate: actualRate,
                 sessionId: meeting._id.toString(),
               }
             });
 
             tokenInfo = {
-              tokensDeducted: tokensToDeduct,
+              tokensDeducted: actualRate,
               remainingBalance: updatedBalance.current_balance,
               lawyerCharges: lawyer.charges,
-              videoRate: lawyer.video_rate
+              customRate: custom_fee ? actualRate : null
             };
           } catch (tokenError: any) {
             // If token deduction fails, delete the created meeting
@@ -263,7 +299,7 @@ export default class MeetingController {
     
 
       // Get lawyer info for token deduction
-      const lawyer = await User.findById(meeting.lawyer_id).select('charges video_rate first_name last_name');
+      const lawyer = await User.findById(meeting.lawyer_id).select('charges first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
           success: false,
@@ -271,8 +307,8 @@ export default class MeetingController {
         });
       }
 
-      // Check if client has sufficient tokens before approving (use video_rate for video consultations)
-      const tokensRequired = lawyer.video_rate || lawyer.charges || 0;
+      // Check if client has sufficient tokens before approving
+      const tokensRequired = lawyer.charges || 0;
       let tokenInfo = null;
       
       if (tokensRequired > 0) {
@@ -311,8 +347,7 @@ export default class MeetingController {
           tokenInfo = {
             tokensDeducted: tokensRequired,
             remainingBalance: updatedBalance.current_balance,
-            lawyerCharges: lawyer.charges,
-            videoRate: lawyer.video_rate
+            lawyerCharges: lawyer.charges
           };
         } catch (tokenError: any) {
           return res.status(400).json({
@@ -498,7 +533,7 @@ export default class MeetingController {
       const meetings = await Meeting.find(query)
         .populate('lawyer_id', 'first_name last_name email account_type charges')
         .populate('client_id', 'first_name last_name email account_type')
-        .sort({ _id: -1 });
+        .sort({ created_at: -1 });
 
       return res.status(200).json({
         success: true,
@@ -673,6 +708,144 @@ export default class MeetingController {
       return res.status(500).json({
         success: false,
         message: error.message || "Failed to update meeting status"
+      });
+    }
+  }
+
+  /**
+   * Update meeting details (date, time, rates, etc.)
+   * @param req.params.meetingId (string)
+   * @param req.body - Fields to update
+   */
+  static async updateMeeting(req: Request, res: Response) {
+    try {
+      const { meetingId } = req.params;
+      const updateData = req.body;
+      const user_id = (req as any).user.userId || (req as any).user._id;
+
+      // Validate meetingId
+      if (!meetingId) {
+        return res.status(400).json({
+          success: false,
+          message: "Meeting ID is required"
+        });
+      }
+
+      // Find meeting where user is either lawyer or client
+      const meeting = await Meeting.findOne({
+        _id: meetingId,
+        $or: [
+          { lawyer_id: user_id },
+          { client_id: user_id }
+        ]
+      });
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: "Meeting not found or you don't have permission to edit this meeting"
+        });
+      }
+
+      // Check if meeting can be edited (only pending or approved meetings)
+      const editableStatuses = [EMeetingStatus.PENDING_APPROVAL, EMeetingStatus.APPROVED];
+      if (!editableStatuses.includes(meeting.status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Meeting cannot be edited in its current status"
+        });
+      }
+
+      // Handle custom rate changes for paid consultations
+      if (updateData.hasOwnProperty('hourly_rate') || updateData.hasOwnProperty('consultation_type')) {
+        const lawyer = await User.findById(meeting.lawyer_id).select('charges first_name last_name');
+        if (!lawyer) {
+          return res.status(404).json({
+            success: false,
+            message: "Lawyer not found"
+          });
+        }
+
+        const newConsultationType = updateData.consultation_type || meeting.consultation_type;
+        let newRate = 0;
+
+        if (newConsultationType === 'free') {
+          newRate = 0;
+        } else if (updateData.custom_fee && updateData.hourly_rate !== undefined) {
+          newRate = updateData.hourly_rate;
+        } else if (!updateData.custom_fee) {
+          newRate = lawyer.charges || 0;
+        } else {
+          newRate = meeting.hourly_rate; // Keep existing rate
+        }
+
+        updateData.hourly_rate = newRate;
+
+        // If changing to a paid consultation or increasing rate, check client token balance
+        if (newConsultationType === 'paid' && newRate > 0) {
+          const currentPaidAmount = meeting.consultation_type === 'paid' ? meeting.hourly_rate : 0;
+          const rateDifference = newRate - currentPaidAmount;
+
+          if (rateDifference > 0) {
+            const clientTokenBalance = await UserTokenBalance.findOne({ user_id: meeting.client_id });
+            if (!clientTokenBalance || clientTokenBalance.current_balance < rateDifference) {
+              return res.status(400).json({
+                success: false,
+                message: `Insufficient tokens for rate change. Additional tokens needed: ${rateDifference}, Available: ${clientTokenBalance?.current_balance || 0}`
+              });
+            }
+          }
+        }
+      }
+
+      // Parse dates if provided
+      if (updateData.requested_date) {
+        updateData.requested_date = new Date(updateData.requested_date);
+      }
+      if (updateData.scheduled_date) {
+        updateData.scheduled_date = new Date(updateData.scheduled_date);
+      }
+
+      // Update the meeting using the model method
+      const updatedMeeting = await (meeting as any).updateDetails(user_id, updateData);
+
+      // Populate the updated meeting for response
+      const populatedMeeting = await Meeting.findById(updatedMeeting._id)
+        .populate('lawyer_id', 'first_name last_name email account_type charges')
+        .populate('client_id', 'first_name last_name email account_type');
+
+      // Send notification for meeting updates
+      try {
+        const otherUserId = populatedMeeting.client_id._id.toString() === user_id.toString() 
+          ? populatedMeeting.lawyer_id._id 
+          : populatedMeeting.client_id._id;
+
+        await NotificationService.createNotification({
+          userId: otherUserId,
+          title: 'Meeting Updated',
+          message: `Meeting details have been updated. Please review the changes.`,
+          type: 'video_consultation_started',
+          relatedId: meetingId,
+          relatedType: 'meeting',
+          redirectUrl: `/meetings/${meetingId}`,
+          priority: 'medium',
+          createdBy: user_id
+        });
+      } catch (notificationError) {
+        console.error('Failed to send meeting update notifications:', notificationError);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Meeting updated successfully",
+        data: populatedMeeting
+      });
+
+    } catch (error: any) {
+      console.error("Update meeting error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to update meeting"
       });
     }
   }

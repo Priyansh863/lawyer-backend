@@ -27,4 +27,8 @@ router.get("/:meetingId", authenticateToken, MeetingController.getMeeting);
 router.put("/status/:meetingId", authenticateToken, MeetingController.updateMeetingStatus);
 router.put("/update-metting-status", authenticateToken, MeetingController.updateMeetingStatus); // Alias for frontend compatibility
 
+router.put("/edit/:meetingId", authenticateToken, MeetingController.updateMeeting);
+router.patch("/edit/:meetingId", authenticateToken, MeetingController.updateMeeting); // PATCH alias
+router.put("/update/:meetingId", authenticateToken, MeetingController.updateMeeting); // Alternative endpoint
+
 export default router;
