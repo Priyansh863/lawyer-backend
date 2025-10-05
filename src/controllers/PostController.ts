@@ -3,6 +3,9 @@ import Post, { ISpatialInfo, ICitation } from '../models/Post';
 import { User } from '../models/user';
 import QRCode from 'qrcode';
 import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
+import { uploadImg } from '../utils/fileUpload';
+import { v4 as uuidv4 } from 'uuid';
 import dbConfig from "../config/secretManagerConfig";
 
 
@@ -23,6 +26,7 @@ interface AuthenticatedRequest extends Request {
 
 class PostController {
     private openai: OpenAI | null = null;
+    private googleAI: GoogleGenAI | null = null;
     private initPromise: Promise<void> | null = null;
     private initialized: boolean = false;
   
@@ -53,17 +57,26 @@ class PostController {
         if (!dbData.openaiApiKey) {
           throw new Error("OpenAI API key not found in configuration");
         }
+
+        if (!dbData.googleAiApiKey) {
+          throw new Error("Google AI API key not found in configuration");
+        }
   
         this.openai = new OpenAI({
           apiKey: dbData.openaiApiKey,
         });
+
+        this.googleAI = new GoogleGenAI({
+          apiKey: dbData.googleAiApiKey,
+        });
   
         this.initialized = true;
-        console.log("OpenAI client initialized successfully");
+        console.log("OpenAI and Google AI clients initialized successfully");
       } catch (error) {
-        console.error("Failed to initialize OpenAI client:", error);
+        console.error("Failed to initialize AI clients:", error);
         this.initialized = false;
         this.openai = null;
+        this.googleAI = null;
         throw error;
       }
     }
@@ -1046,6 +1059,112 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
         error: error.message
       });
     }
+  }
+
+  // Generate AI image using Google Gemini
+  async generateAiImage(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      const { prompt } = req.body;
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+        return;
+      }
+
+      if (!prompt) {
+        res.status(400).json({
+          success: false,
+          message: 'Prompt is required'
+        });
+        return;
+      }
+
+      // Check if Google AI is available
+      if (!this.googleAI) {
+        res.status(503).json({
+          success: false,
+          message: 'AI image generation is currently unavailable. Please configure Google AI API key.'
+        });
+        return;
+      }
+
+      // Generate image using Google GenAI Imagen
+      const enhancedPrompt = `Create a professional legal-themed image: ${prompt}. Style should be modern, clean, and suitable for legal content. High quality, professional photography style.`;
+
+      const response = await this.googleAI.models.generateImages({
+        model: 'imagen-4.0-generate-001',
+        prompt: enhancedPrompt,
+        config: {
+          numberOfImages: 1,
+        },
+      });
+
+      const generatedImage = response.generatedImages?.[0];
+      if (!generatedImage || !generatedImage.image?.imageBytes) {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to generate image'
+        });
+        return;
+      }
+
+      // Convert base64 image bytes to data URL format for uploadImg function
+      const base64Image = generatedImage.image.imageBytes;
+      const dataUrl = `data:image/png;base64,${base64Image}`;
+      
+      // Generate unique filename
+      const fileName = `ai-legal-image-${Date.now()}-${uuidv4().substring(0, 8)}.png`;
+
+      try {
+        // Upload to S3 using existing utility
+        const imageUrl = await uploadImg(dataUrl, fileName, userId);
+
+        res.status(200).json({
+          success: true,
+          message: 'AI image generated and uploaded successfully',
+          data: {
+            imageUrl,
+            prompt: enhancedPrompt,
+            fileName
+          }
+        });
+
+      } catch (uploadError) {
+        console.error('Error uploading image to S3:', uploadError);
+        
+        // Fallback: return base64 if S3 upload fails
+        const fallbackImageUrl = `data:image/png;base64,${base64Image}`;
+        
+        res.status(200).json({
+          success: true,
+          message: 'AI image generated successfully (S3 upload failed, returning base64)',
+          data: {
+            imageUrl: fallbackImageUrl,
+            prompt: enhancedPrompt,
+            uploadWarning: 'Image uploaded as base64 due to S3 upload failure'
+          }
+        });
+      }
+
+    } catch (error: any) {
+      console.error('Error generating AI image:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  }
+
+  // Static wrapper for generateAiImage
+  static async generateAiImage(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const instance = new PostController();
+    return instance.generateAiImage(req, res);
   }
 }
 

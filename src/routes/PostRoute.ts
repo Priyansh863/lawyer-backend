@@ -153,6 +153,16 @@ router.post('/generate-ai', [
   postController.generateAiPost(req, res);
 });
 
+// Generate AI image
+router.post('/generate-image', [
+  authenticateToken,
+  body('prompt')
+    .notEmpty()
+    .withMessage('Prompt is required')
+    .isLength({ min: 3, max: 500 })
+    .withMessage('Prompt must be between 3 and 500 characters')
+], PostController.generateAiImage);
+
 // Get single post by ID
 router.get('/id/:id', [
   authenticateToken,
