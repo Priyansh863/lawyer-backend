@@ -848,9 +848,12 @@ class PostController {
         includeHashtags = true,
         spatialInfo,
         citations,
-        image
+        image,
+        language
       } = req.body;
       const userId = req.user?.userId;
+
+      console.log(language,"languagelanguagelanguagelanguagelanguagelanguagelanguagelanguagelanguage")
 
       if (!userId) {
         res.status(401).json({
@@ -876,16 +879,12 @@ class PostController {
         });
         return;
       }
-
-      // Detect input language and construct AI prompt for legal content
-      const isKorean = /[ㄱ-ㅎ|ㅏ-ㅣ|가-힣]/.test(prompt || topic || '');
-      const language = isKorean ? 'Korean' : 'English';
       
       const aiPrompt = `
 You are a professional legal content writer. Create a comprehensive, detailed, and informative LARGE post about: ${prompt || topic}
 
 Requirements:
-- Write in ${language} language
+- Strictly Write in ${language} language
 - Write in a ${tone} tone
 - Make it LARGE and comprehensive (1200-2000 words minimum)
 - Include practical legal insights and real-world examples

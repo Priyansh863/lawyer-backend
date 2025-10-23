@@ -1,12 +1,18 @@
 import mongoose, { Document, Schema } from "mongoose";
 
+export interface IAnswer {
+  _id?: mongoose.Types.ObjectId;
+  lawyer_name: string;
+  answer: string;
+}
+
 export interface IQuestion extends Document {
   question: string;
   clientName?: string;
   isAnonymous: boolean;
   category: string;
   tags?: string[];
-  answer?: string; // nullable by default
+  answer?: IAnswer[]; // nullable by default
   status: "pending" | "answered";
   clientId: mongoose.Types.ObjectId;
   answeredBy?: mongoose.Types.ObjectId;
@@ -37,8 +43,17 @@ const QuestionSchema = new Schema<IQuestion>(
       type: [String]
     },
     answer: {
-      type: String,
-      default: null // nullable by default
+      type: [{
+        lawyer_name: {
+          type: String,
+          required: true
+        },
+        answer: {
+          type: String,
+          required: true
+        }
+      }],
+      default: [] // empty array by default
     },
     status: {
       type: String,

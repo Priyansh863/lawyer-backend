@@ -12,7 +12,7 @@ import { ISecretManagerData } from "../Interfaces/commonInterfaces";
 let secrectManagerKeys: ISecretManagerData;
 const fetchSecretKeys = async () => {
   secrectManagerKeys = await dbConfig.secretManagerConnection() as ISecretManagerData;
-  sgMail.setApiKey(secrectManagerKeys.sendGridTestApiKey);
+  sgMail.setApiKey("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");
 };
 
 /*
@@ -24,8 +24,8 @@ export const sendMail = async (content: any, email: string) => {
     await fetchSecretKeys();
   }
   const mailData = {
-    from: secrectManagerKeys.sendGridSenderEmail,
-    to: email,
+    from: "infoservifytech@gmail.com",
+    to: "jhalanipriyansh25@gmail.com",
     subject: content.subject,
     text: content.text,
     html: content.html,

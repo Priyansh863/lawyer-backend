@@ -9,8 +9,7 @@ import { IEmailArguments, IReportProblemEmailArguments, SendAddUserEmailResponse
 export const sendOtpEmail = async (
   data: IEmailArguments
 ): Promise<SendAddUserEmailResponse> => {
-  const { type, email } = data;
-  const otp = Math.floor(1000 + Math.random() * 9000);
+  const { type, email,otp } = data;
   const message =
     type === "signup-otp"
       ? "Please use the verification code below to verify your email and complete the signup process."
@@ -22,7 +21,8 @@ export const sendOtpEmail = async (
           </head>
           <body>
               <div style="text-align: center;">
-              <div style="margin-bottom: 20px;"><img  src="https://amour-prod-files.s3.amazonaws.com/APPICON+AND.jpg" alt="amour_logo"><h1 style="color: blue">Amour</h1></div>
+              <div style="margin-bottom: 20px;">
+              <h1 style="color: blue">Lawgg</h1></div>
                   <h3 style="font-size: 28px;">Dear user</h3>
                   <p style=" max-width: 400px;
                   margin: 0 auto;
@@ -32,7 +32,7 @@ export const sendOtpEmail = async (
                   <p style=" max-width: 400px;
                   margin: 0 auto;
                   margin-bottom: 20px;
-                  font-size: 20px;">Having Trouble? Please email us at <a href="mailto:amourdatingapp@gmail.com">amourdatingapp@gmail.com
+                  font-size: 20px;">Having Trouble? Please email us at <a href="mailto:infoservifytech@gmail.com">infoservifytech@gmail.com
                   </a></p>
               </div>
           </body>
@@ -43,7 +43,7 @@ export const sendOtpEmail = async (
         : "Password reset verification code",
   };
   const response = await sendMail(content, email);
-  return { response, otp };
+  return { response, otp: otp as unknown as number };
 };
 
 /**
