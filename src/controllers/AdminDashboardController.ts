@@ -239,19 +239,23 @@ export default class AdminDashboardController {
       }
 
       const users = await User.find(query)
-        .select('first_name last_name email account_type is_verified created_at profile_image')
+        .select('first_name last_name email account_type is_verified created_at profile_image is_active')
         .sort({ created_at: -1 });
 
       const formattedUsers = users.map(user => ({
         id: user._id,
-        name: `${user.first_name} ${user.last_name}`,
+        name:  user.first_name ? `${user.first_name} ${user.last_name}` : 'N/A',
         email: user.email,
+        is_active: user.is_active,
+        is_verified: user.is_verified,
         role: user.account_type,
         status: user.account_type === 'lawyer' ? (user.is_verified ? 'verified' : 'pending') : 'active',
         registeredOn: user.created_at,
         avatar: user.profile_image || null,
-        initials: `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`
+        initials: user.first_name ? `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}` : 'N/A'
       }));
+
+      console.log('Formatted Users:', formattedUsers);
 
       res.status(200).json({
         success: true,
@@ -466,6 +470,136 @@ export default class AdminDashboardController {
         success: false, 
         message: 'Internal server error',
         error: error.message 
+      });
+    }
+  }
+
+  // Toggle user active status
+  static async toggleUserActive(req: Request, res: Response) {
+    try {
+      const { userId } = req.params;
+      const { is_active } = req.body;
+
+      if (typeof is_active !== 'number' || (is_active !== 0 && is_active !== 1)) {
+        return res.status(400).json({
+          success: false,
+          message: 'is_active must be 0 or 1'
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      // Prevent deactivating admin users
+      if (user.account_type === 'admin') {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot modify admin user status'
+        });
+      }
+
+      await User.findByIdAndUpdate(userId, {
+        is_active,
+        updated_at: new Date()
+      });
+
+      // Create notification for status change
+      try {
+        const notification = new Notification({
+          userId: user._id,
+          title: is_active === 1 ? 'Account Activated' : 'Account Deactivated',
+          message: is_active === 1 
+            ? 'Your account has been activated by an administrator' 
+            : 'Your account has been deactivated by an administrator',
+          type: 'account_status',
+          priority: 'high',
+          createdBy: (req as any).user?.userId
+        });
+        await notification.save();
+      } catch (notificationError) {
+        console.log('Failed to create notification:', notificationError);
+      }
+
+      res.status(200).json({
+        success: true,
+        message: `User ${is_active === 1 ? 'activated' : 'deactivated'} successfully`
+      });
+    } catch (error) {
+      console.error('Error toggling user active status:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update user status',
+        error: error.message
+      });
+    }
+  }
+
+  // Toggle user verified status
+  static async toggleUserVerified(req: Request, res: Response) {
+    try {
+      const { userId } = req.params;
+      const { is_verified } = req.body;
+
+      if (typeof is_verified !== 'number' || (is_verified !== 0 && is_verified !== 1)) {
+        return res.status(400).json({
+          success: false,
+          message: 'is_verified must be 0 or 1'
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      // Prevent modifying admin users
+      if (user.account_type === 'admin') {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot modify admin user verification status'
+        });
+      }
+
+      await User.findByIdAndUpdate(userId, {
+        is_verified,
+        updated_at: new Date()
+      });
+
+      // Create notification for verification status change
+      try {
+        const notification = new Notification({
+          userId: user._id,
+          title: is_verified === 1 ? 'Account Verified' : 'Account Unverified',
+          message: is_verified === 1 
+            ? 'Your account has been verified by an administrator' 
+            : 'Your account verification has been removed by an administrator',
+          type: 'account_verification',
+          priority: 'high',
+          createdBy: (req as any).user?.userId
+        });
+        await notification.save();
+      } catch (notificationError) {
+        console.log('Failed to create notification:', notificationError);
+      }
+
+      res.status(200).json({
+        success: true,
+        message: `User ${is_verified === 1 ? 'verified' : 'unverified'} successfully`
+      });
+    } catch (error) {
+      console.error('Error toggling user verified status:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update user verification status',
+        error: error.message
       });
     }
   }

@@ -49,5 +49,9 @@ userRoute.get("/client/:clientId/notes", authenticateToken, UserController.getCl
 userRoute.get("/lawyers", UserController.getLawyers);
 userRoute.get("/clients-list", authenticateToken, UserController.getClientsList);
 
+// Email verification routes
+userRoute.get("/verify-email", UserController.verifyEmail);
+userRoute.post("/complete-registration", UserController.completeRegistration);
+
 
 export default userRoute;

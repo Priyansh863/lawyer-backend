@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import Post, { ISpatialInfo, ICitation } from '../models/Post';
 import { User } from '../models/user';
+import Bookmark from '../models/Bookmark';
 import QRCode from 'qrcode';
 import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
@@ -853,7 +854,7 @@ class PostController {
       } = req.body;
       const userId = req.user?.userId;
 
-      console.log(language,"languagelanguagelanguagelanguagelanguagelanguagelanguagelanguagelanguage")
+      console.log(language,"language selected for AI generation:", language)
 
       if (!userId) {
         res.status(401).json({
@@ -1164,6 +1165,81 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
   static async generateAiImage(req: AuthenticatedRequest, res: Response): Promise<void> {
     const instance = new PostController();
     return instance.generateAiImage(req, res);
+  }
+
+  // Get all bookmarked posts for a user (no pagination)
+  static async getBookmarkedPosts(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+        return;
+      }
+
+      // Find all bookmarked posts for the user
+      const bookmarkedPosts = await Bookmark.find({ userId })
+        .populate({
+          path: 'postId',
+          populate: {
+            path: 'author',
+            select: 'first_name last_name email avatar'
+          }
+        })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      // Filter out any bookmarks where the post might have been deleted
+      const validBookmarkedPosts = bookmarkedPosts.filter((bookmark: any) => bookmark.postId);
+
+      // Format the response
+      const formattedPosts = validBookmarkedPosts.map((bookmark: any) => ({
+        _id: bookmark._id,
+        post: {
+          _id: bookmark.postId._id,
+          title: bookmark.postId.title,
+          content: bookmark.postId.content,
+          author: bookmark.postId.author,
+          slug: bookmark.postId.slug,
+          spatialInfo: bookmark.postId.spatialInfo,
+          citations: bookmark.postId.citations,
+          hashtag: bookmark.postId.hashtag,
+          hashtags: bookmark.postId.hashtags,
+          usefulLinks: bookmark.postId.usefulLinks,
+          image: bookmark.postId.image,
+          customUrl: bookmark.postId.customUrl,
+          shortUrl: bookmark.postId.shortUrl,
+          qrCodeUrl: bookmark.postId.qrCodeUrl,
+          status: bookmark.postId.status,
+          isAiGenerated: bookmark.postId.isAiGenerated,
+          aiPrompt: bookmark.postId.aiPrompt,
+          createdAt: bookmark.postId.createdAt,
+          updatedAt: bookmark.postId.updatedAt
+        },
+        createdAt: bookmark.createdAt,
+        updatedAt: bookmark.updatedAt
+      }));
+
+      res.status(200).json({
+        success: true,
+        message: 'Bookmarked posts retrieved successfully',
+        data: {
+          bookmarks: formattedPosts,
+          totalCount: formattedPosts.length
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Error getting bookmarked posts:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
   }
 }
 

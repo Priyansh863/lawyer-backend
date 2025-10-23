@@ -5,20 +5,13 @@ import Blog from "../models/blog";
 import Case from "../models/case";
 import bcrypt from 'bcrypt';
 import { NotificationService } from '../services/notificationService';
+import { generateTempPassword, generateVerificationToken } from '../utils/passwordUtils';
+import { sendRegistrationEmail, sendVerificationSuccessEmail } from '../utils/emailService';
 
 class UserController {
   static async createUser(req: Request, res: Response) {
     try {
-      const { first_name, last_name, email, phone, password, account_type } = req.body;
-
-      // Validate required fields
-      if (!first_name || !last_name || !email || !phone || !password) {
-        return res.status(200).json({
-          success: false,
-          message: 'All fields are required'
-        });
-      }
-
+      const {  email, account_type } = req.body;
       // Check if user already exists
       const existingUser = await User.findOne({ email });
       if (existingUser) {
@@ -28,34 +21,53 @@ class UserController {
         });
       }
 
-      // Hash password
-      const saltRounds = 10;
-      const hashedPassword = await bcrypt.hash(password, saltRounds);
+      // Generate temporary password and verification token
+      const tempPassword = generateTempPassword();
+      const verificationToken = generateVerificationToken();
+      const tokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-      // Create new user
+      // Hash the temporary password
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(tempPassword, saltRounds);
+
+      // Create new user with unverified status
       const newUser = new User({
-        first_name,
-        last_name,
         email,
-        phone,
         password: hashedPassword,
+        first_name: 'N/A',
+        last_name: 'N/A',
         account_type: account_type || 'client',
-        is_active: true,
-        is_verified: true, // Auto-verify for lawyer-created clients
+        is_active: 0,
+        is_verified: 0, // User needs to verify email first
+        verification_token: verificationToken,
+        token_expires: tokenExpires,
         created_at: new Date(),
         updated_at: new Date()
       });
 
       const savedUser = await newUser.save();
 
-      // Remove password from response
-      const userResponse = savedUser.toObject();
-      delete userResponse.password;
+      // Send registration email with verification link and temporary password
+      try {
+        await sendRegistrationEmail(
+          email, 
+          verificationToken, 
+          tempPassword
+        );
+      } catch (emailError) {
+        console.error('Error sending registration email:', emailError);
+        // Don't fail the user creation if email fails
+      }
 
       res.status(201).json({
         success: true,
-        data: userResponse,
-        message: 'User created successfully'
+        data: {
+          _id: savedUser._id,
+          email: savedUser.email,
+          account_type: savedUser.account_type,
+          is_verified: savedUser.is_verified
+        },
+        message: 'User invited successfully. Registration email sent with verification link.'
       });
     } catch (error) {
       console.error('Error creating user:', error);
@@ -545,6 +557,150 @@ static async getLawyers(req: Request, res: Response) {
       res.status(500).json({
         success: false,
         message: error.message || 'Failed to fetch clients'
+      });
+    }
+  }
+
+  /**
+   * Verify email using verification token
+   */
+  static async verifyEmail(req: Request, res: Response) {
+    try {
+      const { token } = req.query;
+
+      if (!token || typeof token !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Verification token is required'
+        });
+      }
+
+      // Find user with this verification token
+      const user = await User.findOne({
+        verification_token: token,
+        token_expires: { $gt: new Date() } // Token not expired
+      });
+
+      if (!user) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired verification token'
+        });
+      }
+
+      // Update user as verified and clear verification token
+      await User.findByIdAndUpdate(user._id, {
+        is_verified: 1,
+        is_active: 1,
+        verification_token: null,
+        token_expires: null,
+        updated_at: new Date()
+      });
+
+      // Send verification success email
+      try {
+        await sendVerificationSuccessEmail(
+          user.email,
+          user.first_name || '',
+          user.last_name || ''
+        );
+      } catch (emailError) {
+        console.error('Error sending verification success email:', emailError);
+        // Don't fail the verification if email fails
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Email verified successfully! You can now login to your account.',
+        data: {
+          email: user.email,
+          first_name: user.first_name,
+          last_name: user.last_name
+        }
+      });
+    } catch (error) {
+      console.error('Error verifying email:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to verify email'
+      });
+    }
+  }
+
+  /**
+   * Complete user registration after email verification (optional password change)
+   */
+  static async completeRegistration(req: Request, res: Response) {
+    try {
+      const { email, newPassword, confirmPassword } = req.body;
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email is required'
+        });
+      }
+
+      // Find verified user
+      const user = await User.findOne({ 
+        email: email.toLowerCase(),
+        is_verified: 1
+      });
+
+      if (!user) {
+        return res.status(400).json({
+          success: false,
+          message: 'User not found or email not verified'
+        });
+      }
+
+      // If password is provided, validate and update it
+      if (newPassword) {
+        if (newPassword !== confirmPassword) {
+          return res.status(400).json({
+            success: false,
+            message: 'Passwords do not match'
+          });
+        }
+
+        if (newPassword.length < 6) {
+          return res.status(400).json({
+            success: false,
+            message: 'Password must be at least 6 characters long'
+          });
+        }
+
+        // Hash the new password
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+        // Update user password
+        await User.findByIdAndUpdate(user._id, {
+          password: hashedPassword,
+          updated_at: new Date()
+        });
+      }
+
+      // Remove sensitive data from response
+      const userResponse = {
+        _id: user._id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+        account_type: user.account_type,
+        is_verified: user.is_verified
+      };
+
+      res.status(200).json({
+        success: true,
+        data: userResponse,
+        message: 'Registration completed successfully!'
+      });
+    } catch (error) {
+      console.error('Error completing registration:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to complete registration'
       });
     }
   }

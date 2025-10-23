@@ -78,6 +78,14 @@ const UserSchema = new mongoose.Schema(
       type: Date,
       select: false
     },
+    verification_token: {
+      type: String,
+      select: false
+    },
+    token_expires: {
+      type: Date,
+      select: false
+    },
     notes: {
       type: String,
       required: false,

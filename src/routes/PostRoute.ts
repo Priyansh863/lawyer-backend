@@ -106,6 +106,11 @@ router.get('/my-posts', [
     .withMessage('Invalid status')
 ], PostController.getMyPosts);
 
+// Get all bookmarked posts for authenticated user (no pagination)
+router.get('/bookmarked', [
+  authenticateToken
+], PostController.getBookmarkedPosts);
+
 // Parse location from URL
 router.post('/parse-location', [
   body('url')
