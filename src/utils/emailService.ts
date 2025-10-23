@@ -1,6 +1,7 @@
 import { sendMail, sendProblemMail } from "./twilio";
 
 import { IEmailArguments, IReportProblemEmailArguments, SendAddUserEmailResponse, SendAppReportEmailResponse } from "../Interfaces/commonInterfaces";
+import config from "../config/envConfig";
 
 
 
@@ -89,8 +90,10 @@ export const sendRegistrationEmail = async (
   verificationToken: string,
   tempPassword: string
 ): Promise<any> => {
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-  
+  const envConfig = config();
+
+  const verificationLink = `${envConfig.backendURL}/user/verify-email?token=${verificationToken}`;
+
   const content = {
     text: `Welcome to Lawgg! Please verify your email to complete registration.`,
     html: `<html>
