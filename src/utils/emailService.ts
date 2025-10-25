@@ -92,7 +92,7 @@ export const sendRegistrationEmail = async (
 ): Promise<any> => {
   const envConfig = config();
 
-  const verificationLink = `${envConfig.backendURL}/user/verify-email?token=${verificationToken}`;
+  const verificationLink = `${envConfig.frontendUrl}/verify-email/${verificationToken}`;
 
   const content = {
     text: `Welcome to Lawgg! Please verify your email to complete registration.`,
