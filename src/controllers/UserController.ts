@@ -17,7 +17,7 @@ class UserController {
       if (existingUser) {
         return res.status(200).json({
           success: false,
-          message: 'User with this email already exists'
+          message: '이 이메일로 등록된 사용자가 이미 존재합니다'
         });
       }
 
@@ -67,7 +67,7 @@ class UserController {
           account_type: savedUser.account_type,
           is_verified: savedUser.is_verified
         },
-        message: 'User invited successfully. Registration email sent with verification link.'
+        message: '사용자가 성공적으로 초대되었습니다. 인증 링크가 포함된 등록 이메일이 전송되었습니다.'
       });
     } catch (error) {
       console.error('Error creating user:', error);
