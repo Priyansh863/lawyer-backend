@@ -38,7 +38,7 @@ class AuthServices {
    * Login
    */
   async login(data: LoginData) {
-    const { email, password } = data;
+    const { email, password, pcId } = data;
     const query = { email: email.toLowerCase() };
     console.log("Login data:>>>>>>>>>>>>>>>", data);
     
@@ -87,6 +87,46 @@ class AuthServices {
 
     // Verify password
     if (await bcrypt.compare(password.trim(), userInfo.password as string)) {
+      // PC Login Validation: If pcId is provided, validate it against saved pcId
+      if (pcId && pcId.trim() !== '') {
+        // This is a PC login attempt - validate PC ID and license status
+        
+        // Check 1: If pcLicenseStatus is RESET, block login
+        if (userInfo.pcLicenseStatus === 'RESET') {
+          this.response = {
+            success: false,
+            message: "Please register your PC on the website",
+          };
+          return this.response;
+        }
+        
+        // Check 2: If user doesn't have a saved PC ID, block login
+        const savedPcId = userInfo.pcId;
+        if (!savedPcId || savedPcId.trim() === '') {
+          this.response = {
+            success: false,
+            message: "PC ID not registered",
+          };
+          return this.response;
+        }
+        
+        // Check 3: Compare provided pcId with saved pcId
+        if (savedPcId.trim() !== pcId.trim()) {
+          // PC ID doesn't match - block login
+          this.response = {
+            success: false,
+            message: "This PC is not authorized",
+          };
+          return this.response;
+        }
+        
+        // All checks passed - PC ID matches and license is active
+        console.log("PC login validated successfully for user:", email);
+      } else {
+        // No pcId provided - this is a website login, proceed normally
+        console.log("Website login for user:", email);
+      }
+      
       // Generate a JWT token
       const dbData = await dbConfig.secretManagerConnection();
       const token = jwt.sign(

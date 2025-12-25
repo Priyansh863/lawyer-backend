@@ -16,6 +16,8 @@ import chatRoute from "./routes/ChatRoute";
 import aiMarketingRoute from "./routes/AIMarketingRoute";
 import secureLinkRoute from "./routes/SecureLinkRoute";
 import SocketService from "./services/SocketService";
+import UserController from "./controllers/UserController";
+import { authenticateToken } from "./middleware/auth";
 
 const app = express();
 const httpServer = createServer(app);
@@ -42,6 +44,10 @@ app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/user", userRoute);
+// Direct route for save-pc-id at /api/v1/save-pc-id
+app.post("/api/v1/save-pc-id", authenticateToken, UserController.savePcId);
+// Direct route for reset-pc-license at /api/v1/reset-pc-license
+app.post("/api/v1/reset-pc-license", authenticateToken, UserController.resetPcLicense);
 app.use("/api/v1/question", questionRoute);
 app.use("/api/v1/activity", activityRoute);
 

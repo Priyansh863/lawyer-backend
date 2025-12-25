@@ -39,6 +39,8 @@ export interface IUserSchema {
   experience?: string;
   pratice_area?: string;
   created_at?: Date;
+  pcId?: string;
+  pcLicenseStatus?: 'ACTIVE' | 'RESET';
 }
 
 // Admin Schema interface

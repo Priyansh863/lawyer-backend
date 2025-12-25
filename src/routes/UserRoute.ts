@@ -53,5 +53,11 @@ userRoute.get("/clients-list", authenticateToken, UserController.getClientsList)
 userRoute.get("/verify-email", UserController.verifyEmail);
 userRoute.post("/complete-registration", UserController.completeRegistration);
 
+// Route to save PC ID (protected - requires authentication)
+userRoute.post("/save-pc-id", authenticateToken, UserController.savePcId);
+
+// Route to reset PC License (protected - requires authentication)
+userRoute.post("/reset-pc-license", authenticateToken, UserController.resetPcLicense);
+
 
 export default userRoute;

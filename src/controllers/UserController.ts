@@ -704,6 +704,134 @@ static async getLawyers(req: Request, res: Response) {
       });
     }
   }
+
+  /**
+   * Save PC ID for the authenticated user
+   * Protected route - requires JWT authentication
+   */
+  static async savePcId(req: Request, res: Response) {
+    try {
+      // Get user ID from authenticated request
+      const userId = (req as any).user?.userId || (req as any).id;
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated'
+        });
+      }
+
+      const { pcId } = req.body;
+
+      // Validate PC ID is provided
+      if (!pcId || typeof pcId !== 'string' || pcId.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          message: 'PC ID is required and must be a non-empty string'
+        });
+      }
+
+      // Check if PC ID is already used by another user
+      const existingUser = await User.findOne({ 
+        pcId: pcId.trim(),
+        _id: { $ne: userId } // Exclude current user
+      });
+
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: 'This PC ID is already registered to another user'
+        });
+      }
+
+      // Update user's PC ID and set license status to ACTIVE
+      const updatedUser = await User.findByIdAndUpdate(
+        userId,
+        { 
+          pcId: pcId.trim(),
+          pcLicenseStatus: 'ACTIVE',
+          updated_at: new Date()
+        },
+        { new: true }
+      ).select('_id email first_name last_name pcId pcLicenseStatus');
+
+      if (!updatedUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'PC ID saved successfully',
+        data: {
+          user_id: updatedUser._id,
+          pcId: updatedUser.pcId,
+          pcLicenseStatus: updatedUser.pcLicenseStatus
+        }
+      });
+    } catch (error: any) {
+      console.error('Error saving PC ID:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to save PC ID'
+      });
+    }
+  }
+
+  /**
+   * Reset PC License for the authenticated user
+   * Protected route - requires JWT authentication
+   * Sets pcId to null and pcLicenseStatus to RESET
+   */
+  static async resetPcLicense(req: Request, res: Response) {
+    try {
+      // Get user ID from authenticated request
+      const userId = (req as any).user?.userId || (req as any).id;
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated'
+        });
+      }
+
+      // Reset PC ID and set license status to RESET
+      const updatedUser = await User.findByIdAndUpdate(
+        userId,
+        { 
+          pcId: null,
+          pcLicenseStatus: 'RESET',
+          updated_at: new Date()
+        },
+        { new: true }
+      ).select('_id email first_name last_name pcId pcLicenseStatus');
+
+      if (!updatedUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'PC license reset successfully',
+        data: {
+          user_id: updatedUser._id,
+          pcId: updatedUser.pcId,
+          pcLicenseStatus: updatedUser.pcLicenseStatus
+        }
+      });
+    } catch (error: any) {
+      console.error('Error resetting PC license:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to reset PC license'
+      });
+    }
+  }
 }
 
 export default UserController;

@@ -233,6 +233,7 @@ export interface LoginData {
   email: string;
   password: string;
   fcmToken: string;
+  pcId?: string; // Optional PC ID for PC login validation
 }
 
 // Forgot password interface
