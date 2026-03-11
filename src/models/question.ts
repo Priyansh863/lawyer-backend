@@ -3,7 +3,10 @@ import mongoose, { Document, Schema } from "mongoose";
 export interface IAnswer {
   _id?: mongoose.Types.ObjectId;
   lawyer_name: string;
+  lawyer_id: mongoose.Types.ObjectId;
   answer: string;
+  images?: string[];
+  location?: string;
 }
 
 export interface IQuestion extends Document {
@@ -12,6 +15,7 @@ export interface IQuestion extends Document {
   isAnonymous: boolean;
   category: string;
   tags?: string[];
+  images?: string[];
   answer?: IAnswer[]; // nullable by default
   status: "pending" | "answered";
   clientId: mongoose.Types.ObjectId;
@@ -26,7 +30,8 @@ const QuestionSchema = new Schema<IQuestion>(
     question: {
       type: String,
       required: [true, "Question is required"],
-      minlength: [10, "Question must be at least 10 characters"]
+      minlength: [10, "Question must be at least 10 characters"],
+      maxlength: [5000, "Question cannot exceed 5000 characters"]
     },
     clientName: {
       type: String,
@@ -42,15 +47,31 @@ const QuestionSchema = new Schema<IQuestion>(
     tags: {
       type: [String]
     },
+    images: {
+      type: [String],
+      default: []
+    },
     answer: {
       type: [{
         lawyer_name: {
           type: String,
           required: true
         },
+        lawyer_id: {
+          type: Schema.Types.ObjectId,
+          ref: "User"
+        },
         answer: {
           type: String,
-          required: true
+          required: true,
+          maxlength: [5000, "Answer cannot exceed 5000 characters"]
+        },
+        images: {
+          type: [String],
+          default: []
+        },
+        location: {
+          type: String
         }
       }],
       default: [] // empty array by default

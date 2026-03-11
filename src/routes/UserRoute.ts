@@ -3,6 +3,8 @@ import UserController from "../controllers/UserController";
 import Auth from "../middlewares/auth"; // Add this import
 import { authenticateToken } from "../middleware/auth";
 
+import { CaseController } from "../controllers/CaseController";
+
 const userRoute = express.Router();
 
 // Route to create a new user
@@ -13,9 +15,9 @@ userRoute.put("/update/:id", UserController.updateUser);
 
 // Route for generating presigned URLs
 userRoute.post(
-    "/get-presigned-url",
-    UserController.getPresignedUrl
-  );
+  "/get-presigned-url",
+  UserController.getPresignedUrl
+);
 
 // Route to get user list with account type, offset, and limit
 userRoute.get("/list", UserController.getUserList);
@@ -24,13 +26,19 @@ userRoute.get("/list", UserController.getUserList);
 userRoute.get("/info/:id", UserController.getUserInfo);
 
 // Route to get user Cases by Role & ID
-userRoute.get("/cases",Auth,UserController.getCases)
+userRoute.get("/cases", Auth, UserController.getCases)
 
 // Route to get related users(clients or lawyers) based on the user's role
 userRoute.get("/users/related", Auth, UserController.getRelatedUsers);
 
 // Create a new case
 userRoute.post("/CreateCases", Auth, UserController.createCase);
+
+// Update a case
+userRoute.put("/cases/:id", Auth, CaseController.updateCase);
+
+// Delete a case
+userRoute.delete("/cases/:id", Auth, CaseController.deleteCase);
 
 // get all clients and lawyers
 userRoute.get("/clients-and-lawyers", Auth, UserController.getClientsAndLawyers);

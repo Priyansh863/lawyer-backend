@@ -16,8 +16,15 @@ export enum DocumentType {
 // Document processing status
 export enum DocumentStatus {
   PENDING = 'Pending',
-  COMPLETED = 'Completed', 
+  COMPLETED = 'Completed',
   FAILED = 'Failed'
+}
+
+// Document storage type
+export enum StorageType {
+  APP = 'app',
+  CLOUD = 'cloud',
+  APP_CLOUD = 'app_cloud'
 }
 
 export interface IUserDocument extends Document {
@@ -26,7 +33,8 @@ export interface IUserDocument extends Document {
   upload_date: Date;
   summary: string;
   status: DocumentStatus;
-  link: string;
+  link?: string;
+  file_base64?: string;
   privacy: DocumentPrivacy;
   document_type: DocumentType;
   case_id?: mongoose.Types.ObjectId; // Reference to associated case
@@ -34,6 +42,7 @@ export interface IUserDocument extends Document {
   file_type?: string;
   shared_with: mongoose.Types.ObjectId[]; // Array of user IDs this document is shared with
   is_secure_link?: boolean; // Documents uploaded via secure link
+  storage_type: StorageType;
   created_at: Date;
   updated_at: Date;
   is_shared: boolean; // Virtual field
@@ -43,19 +52,22 @@ const UserDocumentSchema: Schema = new Schema(
   {
     document_name: { type: String, required: true },
     summary: { type: String, required: false },
-    status: { 
-      type: String, 
-      enum: Object.values(DocumentStatus), 
+    status: {
+      type: String,
+      enum: Object.values(DocumentStatus),
       required: true,
       default: DocumentStatus.PENDING
     },
-    uploaded_by: { 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: "User", 
+    uploaded_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true,
       index: true
     },
-    link: { type: String, required: true },
+    // Optional legacy URL for files stored in S3 or other storage
+    link: { type: String, required: false },
+    // Optional base64-encoded file content stored in DB
+    file_base64: { type: String },
     privacy: {
       type: String,
       enum: Object.values(DocumentPrivacy),
@@ -72,7 +84,7 @@ const UserDocumentSchema: Schema = new Schema(
     case_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Case",
-      required: function() {
+      required: function () {
         return this.document_type === DocumentType.CASE_RELATED;
       }
     },
@@ -85,9 +97,14 @@ const UserDocumentSchema: Schema = new Schema(
     is_secure_link: {
       type: Boolean,
       default: false
+    },
+    storage_type: {
+      type: String,
+      enum: Object.values(StorageType),
+      default: StorageType.CLOUD
     }
   },
-  { 
+  {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
@@ -100,12 +117,12 @@ UserDocumentSchema.index({ shared_with: 1 });
 UserDocumentSchema.index({ created_at: -1 });
 
 // Virtual for checking if document is shared
-UserDocumentSchema.virtual('is_shared').get(function() {
+UserDocumentSchema.virtual('is_shared').get(function () {
   return this.shared_with && this.shared_with.length > 0;
 });
 
 // Static method to get documents accessible by a user (own + shared + public)
-UserDocumentSchema.statics.getAccessibleDocuments = function(userId: string, userRole: string) {
+UserDocumentSchema.statics.getAccessibleDocuments = function (userId: string, userRole: string) {
   const query: any = {
     $or: [
       // User's own documents (all privacy levels)
@@ -116,7 +133,7 @@ UserDocumentSchema.statics.getAccessibleDocuments = function(userId: string, use
       { shared_with: userId, privacy: 'private' }
     ]
   };
-  
+
   return this.find(query)
     .populate('uploaded_by', 'first_name last_name email account_type')
     .populate('shared_with', 'first_name last_name email account_type')
@@ -124,7 +141,7 @@ UserDocumentSchema.statics.getAccessibleDocuments = function(userId: string, use
 };
 
 // Static method to share document with lawyers
-UserDocumentSchema.statics.shareWithLawyers = function(documentId: string, userIds: string[]) {
+UserDocumentSchema.statics.shareWithLawyers = function (documentId: string, userIds: string[]) {
   return this.findByIdAndUpdate(
     documentId,
     { $addToSet: { shared_with: { $each: userIds } } },
@@ -133,7 +150,7 @@ UserDocumentSchema.statics.shareWithLawyers = function(documentId: string, userI
 };
 
 // Static method to unshare document
-UserDocumentSchema.statics.unshareDocument = function(documentId: string, lawyerId: string) {
+UserDocumentSchema.statics.unshareDocument = function (documentId: string, lawyerId: string) {
   return this.findByIdAndUpdate(
     documentId,
     { $pull: { shared_with: lawyerId } },

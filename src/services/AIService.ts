@@ -1,8 +1,10 @@
 import UserDocument from '../models/user_documents';
 import { extractTextFromDocument, isSupportedDocument, getDocumentType, cleanTextForAI } from '../utils/documentUtils';
-import { extractTextFromPDF, isPDFFile } from '../utils/pdfUtils';
 import openaiUtils from '../utils/openaiUtils';
 import path from 'path';
+
+const pdf = require('pdf-parse');
+const mammoth = require('mammoth');
 
 
 class AIService {
@@ -18,6 +20,7 @@ async processDocument(documentId: string): Promise<{ success: boolean; message: 
     }
 
     const fileUrl = document.link;
+    const fileBase64 = (document as any).file_base64 as string | undefined;
     const fileName = document.document_name;
     const fileType = this.getFileType(fileName);
 
@@ -31,19 +34,29 @@ async processDocument(documentId: string): Promise<{ success: boolean; message: 
       case 'docx':
       case 'doc':
       case 'txt':
-      case 'text':
-        extractedContent = await extractTextFromDocument(fileUrl, fileName);
+      case 'text': {
+        // Prefer base64 content if available; fall back to URL-based extraction
+        if (fileBase64 && fileBase64.trim() !== '') {
+          extractedContent = await this.extractTextFromBase64Document(fileBase64, fileName);
+        } else {
+          extractedContent = await extractTextFromDocument(fileUrl, fileName);
+        }
         const cleanedContent = cleanTextForAI(extractedContent);
         summary = await openaiUtils.generateDocumentSummary(cleanedContent);
         break;
+      }
       
-      case 'image':
-        summary = await this.processImage(fileUrl, fileName);
+      case 'image': {
+        const source = fileUrl && fileUrl.trim() !== '' ? fileUrl : (fileBase64 || '');
+        summary = await this.processImage(source, fileName);
         break;
+      }
       
-      case 'video':
-        summary = await this.processVideo(fileUrl, fileName);
+      case 'video': {
+        const source = fileUrl && fileUrl.trim() !== '' ? fileUrl : (fileBase64 || '');
+        summary = await this.processVideo(source, fileName);
         break;
+      }
       
       default:
         return { success: false, message: `Unsupported file type: ${fileType}` };
@@ -125,17 +138,71 @@ private getFileType(fileName: string): string {
 }
 
 /**
- * Process PDF file
+* Extract text from a PDF buffer
  */
-private async processPDF(fileUrl: string): Promise<string> {
-  console.log(`Extracting text from PDF: ${fileUrl}`);
-  const extractedText = await extractTextFromPDF(fileUrl);
-  
-  if (!extractedText || extractedText.trim().length === 0) {
+private async extractTextFromPDFBuffer(buffer: Buffer): Promise<string> {
+  console.log(`Extracting text from PDF buffer`);
+  const data = await pdf(buffer);
+
+  if (!data.text || data.text.trim().length === 0) {
     throw new Error('No text content found in the PDF');
   }
-  
-  return extractedText;
+
+  return data.text;
+}
+
+/**
+ * Extract text from a DOC/DOCX buffer
+ */
+private async extractTextFromDOCXBuffer(buffer: Buffer): Promise<string> {
+  console.log(`Extracting text from DOC/DOCX buffer`);
+  const result = await mammoth.extractRawText({ buffer });
+
+  if (!result.value || result.value.trim().length === 0) {
+    throw new Error('No text content found in the DOC/DOCX file');
+  }
+
+  return result.value;
+}
+
+/**
+ * Extract text from a TXT buffer
+ */
+private async extractTextFromTXTBuffer(buffer: Buffer): Promise<string> {
+  console.log(`Extracting text from TXT buffer`);
+  const textContent = buffer.toString('utf-8');
+
+  if (!textContent || textContent.trim().length === 0) {
+    throw new Error('No text content found in the TXT file');
+  }
+
+  return textContent;
+}
+
+/**
+ * Helper to extract text directly from base64-encoded content
+ */
+private async extractTextFromBase64Document(fileBase64: string, fileName: string): Promise<string> {
+  // fileBase64 is expected to be a Data URL: data:<mime>;base64,XXXX
+  const base64Data = fileBase64.includes(',')
+    ? fileBase64.split(',')[1]
+    : fileBase64;
+
+  const buffer = Buffer.from(base64Data, 'base64');
+  const extension = path.extname(fileName).toLowerCase().replace('.', '');
+
+  switch (extension) {
+    case 'pdf':
+      return await this.extractTextFromPDFBuffer(buffer);
+    case 'docx':
+    case 'doc':
+      return await this.extractTextFromDOCXBuffer(buffer);
+    case 'txt':
+    case 'text':
+      return await this.extractTextFromTXTBuffer(buffer);
+    default:
+      throw new Error(`Unsupported file type for base64 extraction: ${extension}`);
+  }
 }
 
 /**

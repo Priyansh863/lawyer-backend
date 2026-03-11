@@ -16,7 +16,7 @@ export default class DocumentControllerEnhanced {
    */
   static async uploadClientDocument(req: Request, res: Response) {
     try {
-      const { client_id, fileUrl, fileName, privacy = 'private' } = req.body;
+      const { client_id, fileUrl, fileName, privacy = 'private', file_base64 } = req.body;
       const uploaded_by = (req as any).user._id; // From auth middleware
       
       // Validate required fields
@@ -53,6 +53,7 @@ export default class DocumentControllerEnhanced {
         status: DocumentStatus.PENDING,
         uploaded_by: client_id, // Document belongs to client
         link: fileUrl,
+        file_base64,
         file_type: fileTypeDisplay,
         privacy: privacy === 'public' ? DocumentPrivacy.PUBLIC : DocumentPrivacy.PRIVATE,
         shared_with: [] // Initialize empty shared array
@@ -190,7 +191,7 @@ export default class DocumentControllerEnhanced {
    */
   static async uploadDocumentEnhanced(req: Request, res: Response) {
     try {
-      const { userId, fileUrl, fileName, fileType, privacy = 'private' } = req.body;
+      const { userId, fileUrl, fileName, fileType, privacy = 'private', file_base64 } = req.body;
       
       // Validate required fields
       if (!userId || !fileUrl || !fileName) {
@@ -219,6 +220,7 @@ export default class DocumentControllerEnhanced {
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
         link: fileUrl,
+        file_base64,
         file_type: fileTypeDisplay,
         privacy: privacy === 'public' ? DocumentPrivacy.PUBLIC : DocumentPrivacy.PRIVATE, // Default to private
         shared_with: [] // Initialize empty shared array

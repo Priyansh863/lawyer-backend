@@ -242,7 +242,7 @@ class SecureLinkController {
    */
   static async uploadThroughSecureLink(req: Request, res: Response): Promise<void> {
     try {
-      const { upload_token, file_url, file_name, file_size } = req.body;
+      const { upload_token, file_url, file_name, file_size, file_base64 } = req.body;
 
       if (!upload_token || !file_url || !file_name) {
         res.status(400).json({
@@ -288,6 +288,7 @@ class SecureLinkController {
         document_name: file_name,
         uploaded_by: new mongoose.Types.ObjectId(decoded.client_id),
         link: file_url,
+        file_base64,
         file_size: file_size || 0,
         file_type: file_name.split('.').pop()?.toLowerCase() || 'unknown',
         status: 'Completed',

@@ -15,14 +15,14 @@ const Auth = async (request: Request, response: Response, next: NextFunction) =>
     }
 
     const token = authHeader.split(" ")[1];
-    if (!token) {
-      throw new Error('Invalid token format');
+    if (!token || token === "null" || token === "undefined") {
+      throw new Error('No valid authorization token provided');
     }
 
     const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
-    const decoded = jwt.verify(token, dbData.jwtSecretKey) as { _id: string, account_type:string};
+    const decoded = jwt.verify(token, dbData.jwtSecretKey) as { _id: string, account_type: string };
     console.log("Decoded token ", decoded);
-    
+
     request["id"] = decoded._id;
     request["role"] = decoded.account_type;
     request["token"] = token;

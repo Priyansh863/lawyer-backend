@@ -11,14 +11,14 @@ interface AuthenticatedRequest extends Request {
 }
 
 export const authenticateToken = async (
-  req: AuthenticatedRequest, 
-  res: Response, 
+  req: AuthenticatedRequest,
+  res: Response,
   next: NextFunction
 ) => {
   try {
     // Get authorization header
     const authHeader = req.headers["auth"] || req.headers["authorization"];
-    
+
     // Check if authorization header is present
     if (!authHeader || typeof authHeader !== 'string') {
       console.log("No authorization header provided");
@@ -31,26 +31,26 @@ export const authenticateToken = async (
 
     // Extract token from authorization header
     const token = authHeader.split(" ")[1];
-    
-    // Check if token is present
-    if (!token) {
-      console.log("Invalid token format");
+
+    // Check if token is present and valid
+    if (!token || token === "null" || token === "undefined") {
+      console.log("No valid token format provided");
       return res.status(401).json({
         success: false,
-        message: "Invalid token format",
+        message: "No valid token format provided",
         error: "invalid-token-format"
       });
     }
 
     // Get secret key from secret manager
     const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
-    
+
     // Decode token
-    const decoded = jwt.verify(token, dbData.jwtSecretKey) as { 
-      _id: string; 
+    const decoded = jwt.verify(token, dbData.jwtSecretKey) as {
+      _id: string;
       account_type: string;
     };
-    
+
     // Set user information in request object
     req.user = {
       userId: decoded._id,

@@ -2,7 +2,8 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IReport extends Document {
   userId: mongoose.Types.ObjectId;
-  postId: mongoose.Types.ObjectId;
+  postId?: mongoose.Types.ObjectId;
+  questionId?: mongoose.Types.ObjectId;
   reason: string;
   status: 'pending' | 'reviewed' | 'resolved' | 'dismissed';
   adminNotes?: string;
@@ -21,7 +22,12 @@ const ReportSchema: Schema = new Schema({
   postId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Post',
-    required: true
+    required: false
+  },
+  questionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Question',
+    required: false
   },
   reason: {
     type: String,
@@ -50,8 +56,9 @@ const ReportSchema: Schema = new Schema({
   timestamps: true
 });
 
-// Create compound index to prevent duplicate reports from same user for same post
-ReportSchema.index({ userId: 1, postId: 1 }, { unique: true });
+// Create compound indexes to prevent duplicate reports
+ReportSchema.index({ userId: 1, postId: 1 }, { unique: true, sparse: true });
+ReportSchema.index({ userId: 1, questionId: 1 }, { unique: true, sparse: true });
 
 // Index for admin queries
 ReportSchema.index({ status: 1, createdAt: -1 });

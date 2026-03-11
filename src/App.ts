@@ -99,13 +99,13 @@ app.get('/l/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     const frontendUrl = process.env.FRONTEND_URL || process.env.frontendUrl || 'https://lawgg.net';
-    
+
     // Redirect to frontend with the slug and any query parameters
     const queryString = req.url.split('?')[1];
-    const redirectUrl = queryString 
+    const redirectUrl = queryString
       ? `${frontendUrl}/${slug}?${queryString}`
       : `${frontendUrl}/${slug}`;
-    
+
     res.redirect(302, redirectUrl);
   } catch (error) {
     console.error('Short URL redirect error:', error);
@@ -129,6 +129,20 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 let server: any;
 
 dbConnection.then(async () => {
+  // Database index cleanup for Bookmarks (fixes E11000 duplicate key errors)
+  try {
+    const mongoose = (await import('mongoose')).default;
+    const db = mongoose.connection.db;
+    if (db) {
+      console.log('Cleaning up old Bookmark indexes...');
+      await db.collection('bookmarks').dropIndex('userId_1_postId_1').catch(() => { });
+      await db.collection('bookmarks').dropIndex('userId_1_questionId_1').catch(() => { });
+      console.log('Bookmark indexes cleaned.');
+    }
+  } catch (e) {
+    console.warn('Index cleanup skipped:', e.message);
+  }
+
   // Initialize Socket.IO service
   socketService = new SocketService(httpServer);
 
@@ -136,13 +150,13 @@ dbConnection.then(async () => {
   // Initialize AI Reporter cron jobs
   AIReporterCronService.initializeCronJobs();
   AIReporterCronService.initializeArchiveCleanup();
-  
+
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Server is running on http://0.0.0.0:${port}`);
     console.log(`Socket.IO server initialized`);
     console.log(`AI Reporter cron service initialized`);
   });
-  
+
   server = awsServerlessExpress.createServer(app);
 }).catch(err => {
   console.error('Failed to start server due to database connection issue:', err);

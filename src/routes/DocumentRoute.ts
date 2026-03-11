@@ -7,6 +7,9 @@ const router = Router();
 // POST /api/v1/document/upload
 router.post("/upload", DocumentController.uploadDocument);
 
+// POST /api/v1/document/create-folder - Create a folder entry (no file upload)
+router.post("/create-folder", Auth, DocumentController.createFolder);
+
 // POST /api/v1/document/upload-enhanced - Enhanced upload for PDF, Image, Video
 router.post("/upload-enhanced", DocumentController.uploadDocumentEnhanced);
 
@@ -17,7 +20,10 @@ router.post("/upload-with-ai", DocumentController.uploadDocumentWithAI);
 router.post("/upload-with-summary", DocumentController.uploadDocumentWithSummary);
 
 // GET /api/v1/document/list
-router.get("/list", Auth,DocumentController.listDocuments);
+router.get("/list", Auth, DocumentController.listDocuments);
+
+// GET /api/v1/document/sync - Desktop app sync (must be before /:id route)
+router.get("/sync", Auth, DocumentController.syncDocuments);
 
 // POST /api/v1/document/accessible - Get documents accessible by current user (own + shared)
 router.post("/accessible", DocumentController.getAccessibleDocuments);
@@ -30,6 +36,12 @@ router.get("/:id", DocumentController.getDocumentById);
 
 // PUT /api/v1/document/:id/status - Update document status
 router.put("/:id/status", DocumentController.updateDocumentStatus);
+
+// PATCH /api/v1/document/:id/storage-type - Update document storage type
+router.patch("/:id/storage-type", Auth, DocumentController.updateStorageType);
+
+// PATCH /api/v1/document/:id/remove-cloud - Remove cloud access from document
+router.patch("/:id/remove-cloud", Auth, DocumentController.removeFromCloud);
 
 // DELETE /api/v1/document/:id - Delete document
 router.delete("/:id", DocumentController.deleteDocument);
@@ -58,3 +70,4 @@ router.get("/case/:caseId", DocumentController.getCaseDocuments);
 
 
 export default router;
+

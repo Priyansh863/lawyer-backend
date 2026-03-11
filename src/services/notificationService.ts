@@ -49,7 +49,7 @@ export class NotificationService {
   // Create notifications for multiple users
   static async createBulkNotifications(userIds: (mongoose.Types.ObjectId | string)[], data: Omit<CreateNotificationData, 'userId'>) {
     try {
-      console.log('Bulk notifications data:', data,userIds);
+      console.log('Bulk notifications data:', data, userIds);
       const notifications = userIds.map(userId => ({
         userId,
         title: data.title,
@@ -161,8 +161,8 @@ export class NotificationService {
   static async notifyChatStarted(chatData: any, startedBy: mongoose.Types.ObjectId | string) {
     try {
       // Notify the other participant in the chat
-      const otherUserId = chatData.client_id.toString() === startedBy.toString() 
-        ? chatData.lawyer_id 
+      const otherUserId = chatData.client_id.toString() === startedBy.toString()
+        ? chatData.lawyer_id
         : chatData.client_id;
 
       await this.createNotification({
@@ -186,8 +186,8 @@ export class NotificationService {
   static async notifyVideoConsultationStarted(meetingData: any, startedBy: mongoose.Types.ObjectId | string) {
     try {
       // Notify the other participant
-      const otherUserId = meetingData.client_id.toString() === startedBy.toString() 
-        ? meetingData.lawyer_id 
+      const otherUserId = meetingData.client_id.toString() === startedBy.toString()
+        ? meetingData.lawyer_id
         : meetingData.client_id;
 
       await this.createNotification({
@@ -213,7 +213,7 @@ export class NotificationService {
     try {
       // Notify all lawyers about new Q&A question
       const User = mongoose.model('User');
-      const lawyers = await User.find({ 
+      const lawyers = await User.find({
         account_type: 'lawyer',
         _id: { $ne: postedBy }
       }).select('_id');
@@ -239,20 +239,24 @@ export class NotificationService {
 
   static async notifyQAAnswerPosted(answerData: any, questionData: any, answeredBy: mongoose.Types.ObjectId | string) {
     try {
-      // Notify question author
-      if (questionData.user_id.toString() !== answeredBy.toString()) {
+      // Notify question author - fix field name to clientId
+      const authorId = questionData.clientId || questionData.user_id;
+
+      if (authorId && authorId.toString() !== answeredBy.toString()) {
+        const title = questionData.title || (questionData.question ? (questionData.question.substring(0, 30) + '...') : 'Your Question');
+
         await this.createNotification({
-          userId: questionData.user_id,
+          userId: authorId,
           title: 'Your Question Was Answered',
           titleKo: '질문에 답변이 달렸습니다',
-          message: `Your question "${questionData.title}" has received a new answer.`,
-          messageKo: `귀하의 질문 "${questionData.title}"에 새로운 답변이 달렸습니다.`,
+          message: `Your question "${title}" has received a new answer.`,
+          messageKo: `귀하의 질문 "${title}"에 새로운 답변이 달렸습니다.`,
           type: 'qa_answer_posted',
           relatedId: questionData._id,
           relatedType: 'qa_answer',
           redirectUrl: `/qa/${questionData._id}`,
           priority: 'high',
-          metadata: { questionTitle: questionData.title },
+          metadata: { questionTitle: title },
           createdBy: answeredBy
         });
       }
@@ -264,10 +268,10 @@ export class NotificationService {
   // Notify new message in chat
   static async notifyNewMessage(messageData: any, recipientId: mongoose.Types.ObjectId | string, senderId: mongoose.Types.ObjectId | string) {
     try {
-      const senderName = messageData.senderId ? 
-        `${messageData.senderId.first_name} ${messageData.senderId.last_name}` : 
+      const senderName = messageData.senderId ?
+        `${messageData.senderId.first_name} ${messageData.senderId.last_name}` :
         'Someone';
-      
+
       // Create notification for the recipient
       await this.createNotification({
         userId: recipientId,
@@ -280,7 +284,7 @@ export class NotificationService {
         relatedType: 'chat',
         redirectUrl: `/chat/${messageData.chatId}`,
         priority: 'medium',
-        metadata: { 
+        metadata: {
           senderId: senderId,
           senderName: senderName,
           messageType: messageData.messageType,

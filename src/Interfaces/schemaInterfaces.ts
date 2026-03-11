@@ -39,6 +39,13 @@ export interface IUserSchema {
   experience?: string;
   pratice_area?: string;
   created_at?: Date;
+  // Address fields for settings/profile
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
   pcId?: string;
   pcLicenseStatus?: 'ACTIVE' | 'RESET';
 }

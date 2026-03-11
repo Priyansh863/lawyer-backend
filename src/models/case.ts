@@ -23,6 +23,14 @@ export enum CaseStatus {
   PENDING = 'pending'              // 대기 중 - Pending start
 }
 
+// Case priority levels
+export enum CasePriority {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
+  URGENT = 'urgent'
+}
+
 export interface ICase extends Document {
   case_number: string;
   status: string;
@@ -36,6 +44,9 @@ export interface ICase extends Document {
   client_id: mongoose.Types.ObjectId;
   lawyer_id: mongoose.Types.ObjectId;
   documents: mongoose.Types.ObjectId[]; // References to associated documents
+  priority: string;
+  notes: string;
+  est_duration: string;
   status_history: {
     status: string;
     changed_at: Date;
@@ -48,14 +59,14 @@ export interface ICase extends Document {
 
 const CaseSchema: Schema = new Schema(
   {
-    case_number: { 
-      type: String, 
-      required: true, 
+    case_number: {
+      type: String,
+      required: true,
       unique: true,
       index: true
     },
-    status: { 
-      type: String, 
+    status: {
+      type: String,
       required: true,
       default: CaseStatus.PENDING,
       index: true
@@ -70,46 +81,46 @@ const CaseSchema: Schema = new Schema(
       required: true,
       index: true
     },
-    title: { 
-      type: String, 
+    title: {
+      type: String,
       required: true,
       trim: true
     },
-    description: { 
-      type: String, 
+    description: {
+      type: String,
       required: true,
       trim: true
     },
-    summary: { 
-      type: String, 
+    summary: {
+      type: String,
       required: true,
       trim: true
     },
-    key_points: { 
-      type: [String], 
+    key_points: {
+      type: [String],
       required: true,
       default: []
     },
     important_dates: [{
-      event: { 
-        type: String, 
+      event: {
+        type: String,
         required: true,
         trim: true
       },
-      date: { 
-        type: Date, 
-        required: true 
+      date: {
+        type: Date,
+        required: true
       }
     }],
-    client_id: { 
-      type: mongoose.Types.ObjectId, 
-      ref: "User", 
+    client_id: {
+      type: mongoose.Types.ObjectId,
+      ref: "User",
       required: true,
       index: true
     },
-    lawyer_id: { 
-      type: mongoose.Types.ObjectId, 
-      ref: "User", 
+    lawyer_id: {
+      type: mongoose.Types.ObjectId,
+      ref: "User",
       required: true,
       index: true
     },
@@ -135,12 +146,27 @@ const CaseSchema: Schema = new Schema(
         type: String,
         trim: true
       }
-    }]
+    }],
+    priority: {
+      type: String,
+      enum: Object.values(CasePriority),
+      default: CasePriority.MEDIUM
+    },
+    notes: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    est_duration: {
+      type: String,
+      trim: true,
+      default: ''
+    }
   },
-  { 
-    timestamps: { 
-      createdAt: "created_at", 
-      updatedAt: "updated_at" 
+  {
+    timestamps: {
+      createdAt: "created_at",
+      updatedAt: "updated_at"
     },
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
@@ -161,7 +187,7 @@ CaseSchema.virtual('case_documents', {
 });
 
 // Middleware to track status changes
-CaseSchema.pre('save', function(next) {
+CaseSchema.pre('save', function (next) {
   if (this.isModified('status') && this.status_history) {
     this.status_history.push({
       status: "pending",

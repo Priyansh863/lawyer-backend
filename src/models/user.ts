@@ -52,6 +52,31 @@ const UserSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    // Address fields for settings/profile
+    address_line1: {
+      type: String,
+      required: false,
+    },
+    address_line2: {
+      type: String,
+      required: false,
+    },
+    city: {
+      type: String,
+      required: false,
+    },
+    state: {
+      type: String,
+      required: false,
+    },
+    postal_code: {
+      type: String,
+      required: false,
+    },
+    country: {
+      type: String,
+      required: false,
+    },
     is_active: {
       type: Number,
       required: true,
@@ -59,7 +84,7 @@ const UserSchema = new mongoose.Schema(
     },
     is_verified: {
       type: Number,
-      required: true,   
+      required: true,
       default: 0,
     },
     is_profile_completed: {
@@ -119,7 +144,11 @@ const UserSchema = new mongoose.Schema(
       enum: ['ACTIVE', 'RESET'],
       required: false,
       default: null
-    }
+    },
+    blocked_users: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }]
   },
   {
     timestamps: {

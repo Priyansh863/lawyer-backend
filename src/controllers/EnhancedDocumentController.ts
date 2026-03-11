@@ -20,6 +20,7 @@ export default class EnhancedDocumentController {
       const { 
         userId, 
         fileUrl, 
+        file_base64,
         fileName, 
         privacy = DocumentPrivacy.PRIVATE,
         selectedUsers = [],
@@ -92,6 +93,7 @@ export default class EnhancedDocumentController {
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
         link: fileUrl,
+        file_base64,
         privacy,
         file_size: fileSize,
         file_type: fileType,

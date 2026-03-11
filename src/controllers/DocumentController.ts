@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { uploadImg } from "../utils/fileUpload";
-import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType } from "../models/user_documents";
+import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
 import path from "path";
@@ -19,26 +19,36 @@ export default class DocumentController {
    */
   static async uploadDocumentEnhanced(req: Request, res: Response) {
     try {
-      const { 
-        user_id, 
-        link, 
-        document_name, 
-        file_type, 
-        privacy, 
+      const {
+        user_id,
+        link,
+        file_base64,
+        document_name,
+        file_type,
+        privacy,
         process_with_ai,
         file_size,
         case_id,
-        associated_user_id
+        associated_user_id,
+        storage_type
       } = req.body;
-      
+
       // Validate required fields
-      if (!user_id || !link || !document_name) {
+      if (!user_id || !document_name) {
         return res.status(400).json({
           success: false,
-          message: "Missing required fields: user_id, link, document_name"
+          message: "Missing required fields: user_id, document_name"
         });
       }
-      
+
+      // Require at least one source of file content
+      if ((!link || link.trim() === '') && (!file_base64 || file_base64.trim() === '')) {
+        return res.status(400).json({
+          success: false,
+          message: "Either link or file_base64 is required"
+        });
+      }
+
       // Validate case_id logic: only private documents can have case_id
       if (case_id && privacy !== DocumentPrivacy.PRIVATE) {
         return res.status(400).json({
@@ -46,11 +56,11 @@ export default class DocumentController {
           message: "Case ID can only be assigned to private documents"
         });
       }
-      
+
       // Get file extension and determine file type
       const fileExtension = path.extname(document_name).toLowerCase();
-  
-      
+
+
       // Determine file type display name
       let fileTypeDisplay = 'Document';
       if (['.pdf'].includes(fileExtension)) {
@@ -60,53 +70,57 @@ export default class DocumentController {
       } else if (['.mp4', '.avi', '.mov'].includes(fileExtension)) {
         fileTypeDisplay = 'Video';
       }
-      
+
       // Prepare document data
       const documentData: any = {
         document_name: document_name,
         status: "Completed",
         uploaded_by: user_id,
         link: link,
+        file_base64,
         file_type: file_type || fileTypeDisplay,
         document_type: 'general', // Always general, no user selection
         privacy: privacy || 'public',
-        file_size: file_size
+        file_size: file_size,
+        storage_type: storage_type || 'cloud'
       };
-      
+
       // Only add case_id if privacy is private and case_id is provided
       if (privacy === DocumentPrivacy.PRIVATE && case_id) {
         documentData.case_id = case_id;
       }
-      
+
       // Save to MongoDB
       const doc = await UserDocument.create(documentData);
 
       if (associated_user_id) {
-          const documentData: any = {
-        document_name: document_name,
-        status: "Pending",
-        uploaded_by: associated_user_id,
-        link: link,
-        file_type: file_type || fileTypeDisplay,
-        document_type: 'general', // Always general, no user selection
-        privacy: privacy || 'public',
-        file_size: file_size
-      };
+        const documentData: any = {
+          document_name: document_name,
+          status: "Pending",
+          uploaded_by: associated_user_id,
+          link: link,
+          file_base64,
+          file_type: file_type || fileTypeDisplay,
+          document_type: 'general', // Always general, no user selection
+          privacy: privacy || 'public',
+          file_size: file_size,
+          storage_type: storage_type || 'cloud'
+        };
         await UserDocument.create(documentData);
       }
 
-      
+
 
       console.log(`Processing ${fileTypeDisplay} document: ${doc._id}`);
-      
+
       // Process document with AI service if requested
       if (process_with_ai && document_name) {
         try {
           const aiResult = await AIService.processDocument(doc._id.toString());
-          
+
           // Send notification for document upload if public (after AI processing)
           try {
-            console.log('privacyprivacyprivacyprivacy',privacy)
+            console.log('privacyprivacyprivacyprivacy', privacy)
             if (privacy === DocumentPrivacy.PUBLIC) {
               console.log('Sending document upload notification for public document');
               await NotificationService.notifyDocumentUploaded(doc, user_id);
@@ -114,11 +128,11 @@ export default class DocumentController {
           } catch (notificationError) {
             console.error('Failed to send document upload notification:', notificationError);
           }
-          
+
           if (aiResult.success) {
             // Fetch updated document with summary
             const updatedDoc = await UserDocument.findById(doc._id);
-            
+
             return res.status(200).json({
               success: true,
               message: `${fileTypeDisplay} processed successfully`,
@@ -170,6 +184,58 @@ export default class DocumentController {
   }
 
   /**
+   * Create a "folder" document entry (no actual file, used for organizing documents)
+   * POST /api/v1/document/create-folder
+   */
+  static async createFolder(req: Request, res: Response) {
+    try {
+      const {
+        document_name,
+        user_id,
+        file_size,
+        file_type,
+        storage_type,
+        privacy
+      } = req.body;
+
+      // Basic validation
+      if (!document_name || !user_id) {
+        return res.status(400).json({
+          success: false,
+          message: "document_name and user_id are required"
+        });
+      }
+
+      // Create a document record that represents a folder
+      const folderDoc = await UserDocument.create({
+        document_name,
+        uploaded_by: user_id,
+        status: DocumentStatus.COMPLETED,           // Folders don't need processing
+        link: '#',                                  // No real file link
+        file_size: file_size || 0,                  // 0 size to signal folder
+        file_type: file_type || 'folder',
+        storage_type: storage_type || StorageType.CLOUD,
+        privacy: privacy || DocumentPrivacy.PRIVATE,
+        document_type: DocumentType.GENERAL,
+        shared_with: [],
+        is_secure_link: false
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: "Folder created successfully",
+        document: folderDoc
+      });
+    } catch (error: any) {
+      console.error("Error creating folder:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to create folder"
+      });
+    }
+  }
+
+  /**
    * Uploads a document to S3 and returns the file URL
    * Automatically triggers AI processing for PDF files in background
    * @param req.body.file (base64 string)
@@ -179,23 +245,24 @@ export default class DocumentController {
   static async uploadDocument(req: Request, res: Response) {
     // Save document record after upload
     try {
-      const { userId, fileUrl, fileName,privacy } = req.body;
+      const { userId, fileUrl, fileName, privacy, file_base64 } = req.body;
 
-      console.log("re.body=======",req.body)
-      
+      console.log("re.body=======", req.body)
+
       // Save to MongoDB
       const doc = await UserDocument.create({
         document_name: fileName,
         status: "Pending",
         uploaded_by: userId,
         link: fileUrl,
+        file_base64,
         privacy
       });
 
       // Automatically trigger AI processing for PDF files in background
       if (isPDFFile(fileName)) {
         console.log(`Auto-triggering AI processing for PDF: ${doc._id}`);
-        
+
         // Process asynchronously in background (don't wait for completion)
         AIService.processDocument(doc._id.toString())
           .then(result => {
@@ -208,10 +275,10 @@ export default class DocumentController {
           .catch(error => {
             console.error(`AI processing error for ${doc._id}:`, error.message);
           });
-        
-        return res.status(200).json({ 
-          success: true, 
-          fileUrl, 
+
+        return res.status(200).json({
+          success: true,
+          fileUrl,
           document: doc,
           message: "Document uploaded successfully. AI processing started in background."
         });
@@ -268,12 +335,13 @@ export default class DocumentController {
   static async uploadDocumentWithAI(req: Request, res: Response) {
     const session = await mongoose.startSession();
     session.startTransaction();
-    
+
     try {
-      const { 
-        userId, 
-        fileUrl, 
-        fileName, 
+      const {
+        userId,
+        fileUrl,
+        file_base64,
+        fileName,
         privacy = DocumentPrivacy.PRIVATE, // Default to private for security
         selectedUsers = [],
         processWithAI = false,
@@ -287,9 +355,9 @@ export default class DocumentController {
 
       // Validate case association if document is case-related
       if (documentType === DocumentType.CASE_RELATED && !caseId) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Case ID is required for case-related documents" 
+        return res.status(400).json({
+          success: false,
+          message: "Case ID is required for case-related documents"
         });
       }
 
@@ -304,41 +372,42 @@ export default class DocumentController {
         }).session(session);
 
         if (!caseExists) {
-          return res.status(404).json({ 
-            success: false, 
-            message: "Case not found or access denied" 
+          return res.status(404).json({
+            success: false,
+            message: "Case not found or access denied"
           });
         }
       }
-      
+
       // Get user to check role
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({ success: false, message: "User not found" });
       }
-      
+
       // Validation for privacy options
       if (privacy === DocumentPrivacy.PRIVATE && selectedUsers.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Private documents must have at least one selected user" 
+        return res.status(400).json({
+          success: false,
+          message: "Private documents must have at least one selected user"
         });
       }
-      
+
       // Both lawyers and clients can upload all document types (removed restriction)
-      
+
       // Prepare shared_with array based on privacy setting
       let sharedWith = [];
       if (privacy === DocumentPrivacy.PRIVATE) {
         sharedWith = selectedUsers;
       }
-      
+
       // Save to MongoDB within transaction
       const doc = await UserDocument.create([{
         document_name: fileName,
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
         link: fileUrl,
+        file_base64,
         privacy,
         file_size: fileSize,
         file_type: fileType,
@@ -376,7 +445,7 @@ export default class DocumentController {
       // If AI processing is requested and file is PDF
       if (processWithAI && isPDFFile(fileName)) {
         console.log(`Triggering AI processing for document: ${savedDoc._id}`);
-        
+
         // Process asynchronously (don't wait for completion)
         AIService.processDocument(savedDoc._id.toString())
           .then(result => {
@@ -389,19 +458,19 @@ export default class DocumentController {
         console.warn(`AI processing requested for non-PDF file: ${fileName}`);
       }
 
-      return res.status(200).json({ 
-        success: true, 
-        fileUrl, 
+      return res.status(200).json({
+        success: true,
+        fileUrl,
         document: savedDoc,
-        message: "Document uploaded successfully" + (processWithAI && isPDFFile(fileName) ? 
-                 ". AI processing started in background." : "") 
+        message: "Document uploaded successfully" + (processWithAI && isPDFFile(fileName) ?
+          ". AI processing started in background." : "")
       });
     } catch (error: any) {
       await session.abortTransaction();
       session.endSession();
       console.error("Document upload with AI error:", error);
-      return res.status(500).json({ 
-        success: false, 
+      return res.status(500).json({
+        success: false,
         message: error.message || "Failed to upload document",
         error: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
@@ -416,8 +485,8 @@ export default class DocumentController {
    */
   static async uploadDocumentWithSummary(req: Request, res: Response) {
     try {
-      const { userId, fileUrl, fileName } = req.body;
-      
+      const { userId, fileUrl, fileName, file_base64 } = req.body;
+
       // Validate required fields
       if (!userId || !fileUrl || !fileName) {
         return res.status(400).json({
@@ -433,24 +502,25 @@ export default class DocumentController {
           message: "Only PDF files are supported for AI processing"
         });
       }
-      
+
       // Save to MongoDB
       const doc = await UserDocument.create({
         document_name: fileName,
         status: "Pending",
         uploaded_by: userId,
         link: fileUrl,
+        file_base64,
       });
 
       console.log(`Processing PDF document synchronously: ${doc._id}`);
-      
+
       // Process document synchronously (wait for completion)
       const aiResult = await AIService.processDocument(doc._id.toString());
-      
+
       if (aiResult.success) {
         // Fetch updated document with summary
         const updatedDoc = await UserDocument.findById(doc._id);
-        
+
         return res.status(200).json({
           success: true,
           message: "Document uploaded and processed successfully",
@@ -469,9 +539,9 @@ export default class DocumentController {
       }
     } catch (error: any) {
       console.error("Document upload with summary error:", error);
-      return res.status(500).json({ 
-        success: false, 
-        message: error.message || "Failed to upload document and generate summary" 
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to upload document and generate summary"
       });
     }
   }
@@ -487,14 +557,14 @@ export default class DocumentController {
 
       const query: any = { uploaded_by: userObjectId };
 
-      
-      
+
+
       if (status && status !== 'all') {
         query.status = status;
       }
 
-      console.log("queryqueryquery", clientId,query,"queryqueryqueryqueryquery");
-      
+      console.log("queryqueryquery", clientId, query, "queryqueryqueryqueryquery");
+
       const documents = await UserDocument.find(query)
         .populate('uploaded_by', 'first_name last_name email')
         .sort({ createdAt: -1 });
@@ -521,11 +591,11 @@ export default class DocumentController {
       const { status } = req.query;
 
       const query: any = { case_id: caseId };
-      
+
       if (status && status !== 'all') {
         query.status = status;
       }
-      
+
       const documents = await UserDocument.find(query)
         .populate('uploaded_by', 'first_name last_name email account_type')
         .populate('shared_with', 'first_name last_name email account_type')
@@ -653,12 +723,12 @@ export default class DocumentController {
   static async getAccessibleDocuments(req: Request, res: Response) {
     try {
       const { userId } = req.body;
-      const { 
-        privacy, 
-        status, 
-        page = 1, 
-        limit = 20, 
-        search 
+      const {
+        privacy,
+        status,
+        page = 1,
+        limit = 20,
+        search
       } = req.query;
 
       // Get user to determine role
@@ -692,7 +762,7 @@ export default class DocumentController {
 
       // Calculate pagination
       const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
-      
+
       // Get documents with pagination
       const documents = await UserDocument.find(query)
         .populate('uploaded_by', 'first_name last_name email account_type')
@@ -907,7 +977,7 @@ export default class DocumentController {
         updateData,
         { new: true }
       ).populate('uploaded_by', 'first_name last_name email account_type')
-       .populate('shared_with', 'first_name last_name email account_type');
+        .populate('shared_with', 'first_name last_name email account_type');
 
       return res.status(200).json({
         success: true,
@@ -1027,7 +1097,7 @@ export default class DocumentController {
       }
 
       // Check if user has access to this document
-      const hasAccess = 
+      const hasAccess =
         document.uploaded_by._id.toString() === userId ||
         document.shared_with.some((lawyer: any) => lawyer._id.toString() === userId);
 
@@ -1057,6 +1127,124 @@ export default class DocumentController {
       return res.status(500).json({
         success: false,
         message: error.message || 'Failed to get document details'
+      });
+    }
+  }
+
+  /**
+   * Update storage type of a document
+   * PATCH /document/:id/storage-type
+   */
+  static async updateStorageType(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { storage_type, link } = req.body;
+
+      if (!['app', 'cloud', 'app_cloud'].includes(storage_type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid storage_type. Must be: app, cloud, or app_cloud'
+        });
+      }
+
+      const updateData: any = { storage_type };
+      if (link) updateData.link = link;
+
+      const document = await UserDocument.findByIdAndUpdate(
+        id,
+        updateData,
+        { new: true }
+      );
+
+      if (!document) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        document,
+        message: `Storage type updated to ${storage_type}`
+      });
+    } catch (error: any) {
+      console.error('Error updating storage type:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to update storage type'
+      });
+    }
+  }
+
+  /**
+   * Remove document from cloud access
+   * If it's app_cloud, downgrade to app; if it's cloud-only, downgrade to app
+   * PATCH /document/:id/remove-cloud
+   */
+  static async removeFromCloud(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const document = await UserDocument.findById(id);
+
+      if (!document) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+
+      // If it's app_cloud, downgrade to app; if it's cloud-only, downgrade to app
+      let newStorageType: string = 'app';
+      if (document.storage_type === 'app_cloud') {
+        newStorageType = 'app';
+      }
+
+      document.storage_type = newStorageType as StorageType;
+      await document.save();
+
+      res.json({
+        success: true,
+        document,
+        message: 'Document removed from cloud'
+      });
+    } catch (error: any) {
+      console.error('Error removing document from cloud:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to remove document from cloud'
+      });
+    }
+  }
+
+  /**
+   * Sync documents for desktop app
+   * Returns all docs where storage_type is 'app' or 'app_cloud'
+   * GET /document/sync
+   */
+  static async syncDocuments(req: any, res: Response) {
+    try {
+      const userId = req.id;
+
+      // Fetch all documents where user owns them and storage_type includes 'app'
+      const documents = await UserDocument.find({
+        uploaded_by: userId,
+        storage_type: { $in: ['app', 'app_cloud'] }
+      })
+        .populate('uploaded_by', 'first_name last_name email account_type')
+        .sort({ createdAt: -1 });
+
+      res.json({
+        success: true,
+        documents,
+        count: documents.length
+      });
+    } catch (error: any) {
+      console.error('Error syncing documents:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to sync documents'
       });
     }
   }
