@@ -115,6 +115,8 @@ export class CaseController {
   static async getLawyerCases(req: AuthRequest, res: Response) {
     try {
       const { lawyerId } = req.params;
+      const requesterId = req.user?._id;
+      const requesterRole = req.user?.role || (req as any).role; // Try both req.user and req.role
       
       if (!Types.ObjectId.isValid(lawyerId)) {
         return res.status(400).json({
@@ -123,7 +125,23 @@ export class CaseController {
         });
       }
 
-      const cases = await Case.find({ lawyer_id: new Types.ObjectId(lawyerId) })
+      const query: any = { lawyer_id: new Types.ObjectId(lawyerId) };
+
+      // Security restriction: 
+      // Clients/Users should only see their own cases with this lawyer
+      if (requesterRole === 'client' || requesterRole === 'user') {
+          query.client_id = new Types.ObjectId(requesterId);
+      } 
+      // If a lawyer is requesting and they are NOT the lawyer being queried, 
+      // they should not see anything (unless they're an admin, handled next)
+      else if (requesterRole === 'lawyer' && requesterId !== lawyerId) {
+          query.lawyer_id = new Types.ObjectId(requesterId); // effectively blocking access
+      }
+      
+      // Admins (and the lawyer themselves) see everything for that lawyer_id filter
+      // Note: if requesterRole is 'admin', we don't add more filters to the lawyer_id query
+
+      const cases = await Case.find(query)
         .populate('client_id', 'first_name last_name email phone')
         .populate('lawyer_id', 'first_name last_name email')
         .sort({ created_at: -1 });
@@ -148,6 +166,8 @@ export class CaseController {
   static async getCaseById(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
+      const requesterId = req.user?._id;
+      const requesterRole = req.user?.role || (req as any).role;
       
       if (!Types.ObjectId.isValid(id)) {
         return res.status(400).json({
@@ -165,6 +185,18 @@ export class CaseController {
           success: false,
           message: 'Case not found'
         });
+      }
+
+      // Security Check: Only allow if requester is the client, the lawyer, or an admin
+      const isClient = caseData.client_id && (caseData.client_id as any)._id.toString() === requesterId;
+      const isLawyer = caseData.lawyer_id && (caseData.lawyer_id as any)._id.toString() === requesterId;
+      const isAdmin = requesterRole === 'admin';
+
+      if (!isClient && !isLawyer && !isAdmin) {
+          return res.status(403).json({
+              success: false,
+              message: 'Access denied: You are not authorized to view this case'
+          });
       }
 
       res.json({

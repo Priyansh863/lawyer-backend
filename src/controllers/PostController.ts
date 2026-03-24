@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import Post, { ISpatialInfo, ICitation } from '../models/Post';
 import { User } from '../models/user';
 import Bookmark from '../models/Bookmark';
-import QRCode from 'qrcode';
+import * as QRCode from 'qrcode';
 import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
 import { uploadImg } from '../utils/fileUpload';
@@ -108,15 +108,14 @@ class PostController {
         .trim()
         .substring(0, 100); // Limit to 100 characters
 
-      // Check if slug already exists
-      const existingPost = await Post.findOne({ slug });
-      if (existingPost) {
-        res.status(400).json({
-          success: false,
-          message: 'A post with this title already exists. Please choose a different title.'
-        });
-        return;
+      // Check if slug already exists and make it unique
+      let uniqueSlug = slug;
+      let counter = 1;
+      while (await Post.findOne({ slug: uniqueSlug })) {
+        uniqueSlug = `${slug}-${counter}`;
+        counter++;
       }
+
 
     
 
@@ -139,7 +138,7 @@ class PostController {
         title,
         content,
         author: userId,
-        slug,
+        slug: uniqueSlug,
         spatialInfo: spatialInfo || undefined,
         citations: citations || [],
         hashtag: hashtag || undefined,
@@ -430,7 +429,10 @@ class PostController {
   // Generate QR code for post
   static async generateQrCode(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const { slug } = req.params;
+      let { slug } = req.params;
+      
+      // Decode slug in case it contains UTF-8 characters
+      slug = decodeURIComponent(slug);
 
       if (!slug) {
         res.status(400).json({
@@ -445,13 +447,20 @@ class PostController {
       if (!post) {
         res.status(404).json({
           success: false,
-          message: 'Post not found'
+          message: `Post with slug "${slug}" not found`
         });
         return;
       }
 
+      if (typeof post.generateQrCodeUrl !== 'function') {
+        throw new Error('generateQrCodeUrl method not found on post document');
+      }
+
       const qrCodeUrl = post.generateQrCodeUrl();
-      const qrCodeDataUrl = await QRCode.toDataURL(qrCodeUrl);
+      
+      // Use the library directly if import style is the issue
+      const qrcodeLib = require('qrcode');
+      const qrCodeDataUrl = await qrcodeLib.toDataURL(qrCodeUrl);
 
       // Update post with QR code
       post.qrCodeUrl = qrCodeDataUrl;
@@ -466,10 +475,12 @@ class PostController {
       });
 
     } catch (error: any) {
-      console.error('Error generating QR code:', error);
+      console.error('Error in generateQrCode:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: 'Internal server error during QR generation',
+        error: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
   }
@@ -799,6 +810,120 @@ class PostController {
       res.status(500).json({
         success: false,
         message: "Internal server error",
+        error: error.message
+      });
+    }
+  }
+
+  // Update post
+  static async updatePost(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+        return;
+      }
+
+      const post = await Post.findById(id);
+
+      if (!post) {
+        res.status(404).json({
+          success: false,
+          message: 'Post not found'
+        });
+        return;
+      }
+
+      // Check if user is the author
+      if (post.author.toString() !== userId) {
+        res.status(403).json({
+          success: false,
+          message: 'You can only update your own posts'
+        });
+        return;
+      }
+
+      // Update allowed fields
+      const allowedUpdates = [
+        'title', 'content', 'status', 'spatialInfo', 
+        'citations', 'hashtag', 'hashtags', 'usefulLinks', 'image'
+      ];
+      
+      allowedUpdates.forEach(field => {
+        if (updates[field] !== undefined) {
+          (post as any)[field] = updates[field];
+        }
+      });
+
+      await post.save();
+
+      res.status(200).json({
+        success: true,
+        message: 'Post updated successfully',
+        data: post
+      });
+
+    } catch (error: any) {
+      console.error('Error updating post:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  }
+
+  // Delete post
+  static async deletePost(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+        return;
+      }
+
+      const post = await Post.findById(id);
+
+      if (!post) {
+        res.status(404).json({
+          success: false,
+          message: 'Post not found'
+        });
+        return;
+      }
+
+      // Check if user is the author
+      if (post.author.toString() !== userId) {
+        res.status(403).json({
+          success: false,
+          message: 'You can only delete your own posts'
+        });
+        return;
+      }
+
+      await Post.findByIdAndDelete(id);
+
+      res.status(200).json({
+        success: true,
+        message: 'Post deleted successfully'
+      });
+
+    } catch (error: any) {
+      console.error('Error deleting post:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error',
         error: error.message
       });
     }

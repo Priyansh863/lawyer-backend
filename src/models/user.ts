@@ -141,7 +141,7 @@ const UserSchema = new mongoose.Schema(
     },
     pcLicenseStatus: {
       type: String,
-      enum: ['ACTIVE', 'RESET'],
+      enum: ['ACTIVE', 'RESET', null],
       required: false,
       default: null
     },

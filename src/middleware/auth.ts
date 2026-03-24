@@ -66,10 +66,21 @@ export const authenticateToken = async (
     next();
   } catch (error) {
     console.log("Error in verifying auth token:", error);
+
+    // Only report session expiry when the JWT is actually expired
+    if (error && typeof error === "object" && (error as any).name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "Your session has expired. Please login again.",
+        error: "token-expired"
+      });
+    }
+
+    // For all other JWT issues, return a more generic invalid-token error
     return res.status(401).json({
       success: false,
-      message: "Your session has expired. Please login again.",
-      error: "token-expired"
+      message: "Invalid authentication token.",
+      error: "invalid-token"
     });
   }
 };

@@ -553,17 +553,26 @@ export default class DocumentController {
     try {
       const { clientId } = req.params;
       const { status } = req.query;
+      const requesterId = (req as any).id;
+      const requesterRole = (req as any).role;
       const userObjectId = new mongoose.Types.ObjectId(clientId);
 
       const query: any = { uploaded_by: userObjectId };
 
-
+      // Security check: If requester is not the document owner and not an admin
+      if (requesterId !== clientId && requesterRole !== 'admin') {
+        // Only return public documents or documents specifically shared with the requester
+        query.$or = [
+          { privacy: DocumentPrivacy.PUBLIC },
+          { shared_with: requesterId }
+        ];
+      }
 
       if (status && status !== 'all') {
         query.status = status;
       }
 
-      console.log("queryqueryquery", clientId, query, "queryqueryqueryqueryquery");
+      console.log("Fetching client documents with query:", query);
 
       const documents = await UserDocument.find(query)
         .populate('uploaded_by', 'first_name last_name email')
@@ -589,6 +598,32 @@ export default class DocumentController {
     try {
       const { caseId } = req.params;
       const { status } = req.query;
+      const requesterId = (req as any).id;
+      const requesterRole = (req as any).role;
+
+      // Security check: Verify the case exists and the user has access to it
+      const associatedCase = await Case.findById(caseId);
+      
+      if (!associatedCase) {
+        return res.status(404).json({
+          success: false,
+          message: 'Case not found'
+        });
+      }
+
+      // Check if user is the client, the lawyer, or an admin
+      const isClient = associatedCase.client_id.toString() === requesterId;
+      const isLawyer = associatedCase.lawyer_id.toString() === requesterId;
+      const isAdmin = requesterRole === 'admin';
+
+      if (!isClient && !isLawyer && !isAdmin) {
+        return res.status(200).json({
+          success: true,
+          documents: [],
+          total: 0,
+          message: 'Access restricted: You do not have permission to view documents for this case'
+        });
+      }
 
       const query: any = { case_id: caseId };
 
@@ -621,6 +656,8 @@ export default class DocumentController {
   static async getDocumentById(req: Request, res: Response) {
     try {
       const { id } = req.params;
+      const requesterId = (req as any).id;
+      const requesterRole = (req as any).role;
 
       const document = await UserDocument.findById(id)
         .populate('uploaded_by', 'first_name last_name email');
@@ -630,6 +667,19 @@ export default class DocumentController {
           success: false,
           message: 'Document not found'
         });
+      }
+
+      // Security Check: Verify user has access to this document
+      const isOwner = document.uploaded_by && (document.uploaded_by as any)._id.toString() === requesterId;
+      const isPublic = document.privacy === DocumentPrivacy.PUBLIC;
+      const isShared = document.shared_with && document.shared_with.some(uid => uid.toString() === requesterId);
+      const isAdmin = requesterRole === 'admin';
+
+      if (!isOwner && !isPublic && !isShared && !isAdmin) {
+          return res.status(403).json({
+              success: false,
+              message: 'Access denied: You are not authorized to view this document'
+          });
       }
 
       res.json({

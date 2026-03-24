@@ -22,6 +22,8 @@ const OptionalAuth = async (request: Request, response: Response, next: NextFunc
         request["id"] = decoded._id;
         request["role"] = decoded.account_type;
         request["token"] = token;
+        // Also attach a normalized `user` object for consistency with other parts of the codebase.
+        (request as any).user = { userId: decoded._id, role: decoded.account_type };
         console.log(`OptionalAuth: Extracted userId=${decoded._id}, role=${decoded.account_type}`);
         next();
     } catch (error) {

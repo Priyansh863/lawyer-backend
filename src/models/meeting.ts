@@ -48,7 +48,7 @@ export interface IMeeting extends Document {
   is_in_progress: boolean;
   
   // New fields for custom rates and scheduling
-  consultation_type: 'free' | 'paid';
+  consultation_type: 'free' | 'paid' | 'video' | 'audio';
   hourly_rate: number;
   custom_fee: boolean;
   requested_date: Date;
@@ -172,7 +172,7 @@ const MeetingSchema: Schema = new Schema(
     // New fields for custom rates and scheduling
     consultation_type: {
       type: String,
-      enum: ['free', 'paid'],
+      enum: ['free', 'paid', 'video', 'audio'],
       default: 'paid'
     },
     hourly_rate: {

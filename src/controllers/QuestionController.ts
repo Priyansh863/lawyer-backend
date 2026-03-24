@@ -61,6 +61,7 @@ class QuestionController {
         category: category?.toString(),
         filter: filter as any,
         userId: userId,
+        role: role?.toString(),
         page: pageNumber,
         limit: pageLimit
       });

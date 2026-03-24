@@ -5,19 +5,19 @@ import Auth from "../middlewares/auth";
 const router = Router();
 
 // POST /api/v1/document/upload
-router.post("/upload", DocumentController.uploadDocument);
+router.post("/upload", Auth, DocumentController.uploadDocument);
 
 // POST /api/v1/document/create-folder - Create a folder entry (no file upload)
 router.post("/create-folder", Auth, DocumentController.createFolder);
 
 // POST /api/v1/document/upload-enhanced - Enhanced upload for PDF, Image, Video
-router.post("/upload-enhanced", DocumentController.uploadDocumentEnhanced);
+router.post("/upload-enhanced", Auth, DocumentController.uploadDocumentEnhanced);
 
 // POST /api/v1/document/upload-with-ai
-router.post("/upload-with-ai", DocumentController.uploadDocumentWithAI);
+router.post("/upload-with-ai", Auth, DocumentController.uploadDocumentWithAI);
 
 // POST /api/v1/document/upload-with-summary - Upload and return summary immediately
-router.post("/upload-with-summary", DocumentController.uploadDocumentWithSummary);
+router.post("/upload-with-summary", Auth, DocumentController.uploadDocumentWithSummary);
 
 // GET /api/v1/document/list
 router.get("/list", Auth, DocumentController.listDocuments);
@@ -26,16 +26,19 @@ router.get("/list", Auth, DocumentController.listDocuments);
 router.get("/sync", Auth, DocumentController.syncDocuments);
 
 // POST /api/v1/document/accessible - Get documents accessible by current user (own + shared)
-router.post("/accessible", DocumentController.getAccessibleDocuments);
+router.post("/accessible", Auth, DocumentController.getAccessibleDocuments);
 
 // GET /api/v1/document/client/:clientId - Get all documents for a specific client
-router.get("/client/:clientId", DocumentController.getClientDocuments);
+router.get("/client/:clientId", Auth, DocumentController.getClientDocuments);
+
+// GET /api/v1/document/case/:caseId - Get documents for a specific case
+router.get("/case/:caseId", Auth, DocumentController.getCaseDocuments);
 
 // GET /api/v1/document/:id - Get document by ID
-router.get("/:id", DocumentController.getDocumentById);
+router.get("/:id", Auth, DocumentController.getDocumentById);
 
 // PUT /api/v1/document/:id/status - Update document status
-router.put("/:id/status", DocumentController.updateDocumentStatus);
+router.put("/:id/status", Auth, DocumentController.updateDocumentStatus);
 
 // PATCH /api/v1/document/:id/storage-type - Update document storage type
 router.patch("/:id/storage-type", Auth, DocumentController.updateStorageType);
@@ -44,30 +47,25 @@ router.patch("/:id/storage-type", Auth, DocumentController.updateStorageType);
 router.patch("/:id/remove-cloud", Auth, DocumentController.removeFromCloud);
 
 // DELETE /api/v1/document/:id - Delete document
-router.delete("/:id", DocumentController.deleteDocument);
+router.delete("/:id", Auth, DocumentController.deleteDocument);
 
 // === DOCUMENT SHARING & PRIVACY ROUTES ===
 
 // POST /api/v1/document/:documentId/share - Share document with lawyers
-router.post("/:documentId/share", DocumentController.shareDocument);
+router.post("/:documentId/share", Auth, DocumentController.shareDocument);
 
 // POST /api/v1/document/:documentId/unshare - Unshare document from lawyer
-router.post("/:documentId/unshare", DocumentController.unshareDocument);
+router.post("/:documentId/unshare", Auth, DocumentController.unshareDocument);
 
 // PUT /api/v1/document/:documentId/privacy - Update document privacy
-router.put("/:documentId/privacy", DocumentController.updateDocumentPrivacy);
+router.put("/:documentId/privacy", Auth, DocumentController.updateDocumentPrivacy);
 
 // POST /api/v1/document/lawyers-for-sharing - Get lawyers available for sharing
-router.post("/lawyers-for-sharing", DocumentController.getLawyersForSharing);
+router.post("/lawyers-for-sharing", Auth, DocumentController.getLawyersForSharing);
 
 // POST /api/v1/document/:documentId/sharing-details - Get document sharing details
-router.post("/:documentId/sharing-details", DocumentController.getDocumentSharingDetails);
+router.post("/:documentId/sharing-details", Auth, DocumentController.getDocumentSharingDetails);
 
-router.post("/users-for-sharing", DocumentController.getUsersForSharing);
-
-// Add this line in DocumentRoute.ts after line 26:
-router.get("/case/:caseId", DocumentController.getCaseDocuments);
-
+router.post("/users-for-sharing", Auth, DocumentController.getUsersForSharing);
 
 export default router;
-

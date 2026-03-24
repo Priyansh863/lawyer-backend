@@ -178,7 +178,7 @@ const PostSchema: Schema = new Schema({
   },
   qrCodeUrl: {
     type: String,
-    maxlength: 1000
+    maxlength: 200000
   },
   status: {
     type: String,
@@ -195,7 +195,7 @@ const PostSchema: Schema = new Schema({
   },
   image: {
     type: String,
-    maxlength: 1000
+    maxlength: 200000
   }
 }, {
   timestamps: true

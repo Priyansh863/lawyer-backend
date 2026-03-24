@@ -121,12 +121,12 @@ router.post('/parse-location', [
 ], PostController.parseLocationUrl);
 
 // Generate QR code for post
-router.post('/:slug/qr-code', [
+router.post('/qr-code/:slug', [
   authenticateToken,
   param('slug')
     .notEmpty()
     .withMessage('Post slug is required')
-    .matches(/^[a-z0-9-]+$/)
+    .matches(/^[a-z0-9가-힣-]+$/)
     .withMessage('Invalid slug format')
 ], PostController.generateQrCode);
 
@@ -167,6 +167,26 @@ router.post('/generate-image', [
     .isLength({ min: 3, max: 500 })
     .withMessage('Prompt must be between 3 and 500 characters')
 ], PostController.generateAiImage);
+
+// Update post
+router.put('/update/:id', [
+  authenticateToken,
+  param('id')
+    .notEmpty()
+    .withMessage('Post ID is required')
+    .isMongoId()
+    .withMessage('Invalid post ID format')
+], PostController.updatePost);
+
+// Delete post
+router.delete('/delete/:id', [
+  authenticateToken,
+  param('id')
+    .notEmpty()
+    .withMessage('Post ID is required')
+    .isMongoId()
+    .withMessage('Invalid post ID format')
+], PostController.deletePost);
 
 // Get single post by ID
 router.get('/id/:id', [

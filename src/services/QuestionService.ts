@@ -6,8 +6,9 @@ import Bookmark from "../models/Bookmark";
 interface GetQuestionsParams {
   status?: string;
   category?: string;
-  filter?: 'waiting' | 'my_answers' | 'bookmarks' | string;
+  filter?: 'waiting' | 'my_answers' | 'my_questions' | 'bookmarks' | string;
   userId?: string;
+  role?: string;
   page?: number;
   limit?: number;
 }
@@ -64,12 +65,14 @@ class QuestionService {
     category,
     filter,
     userId,
+    role,
     page = 1,
     limit = 10
   }: GetQuestionsParams) {
     try {
       let filterQuery: Record<string, any> = {};
       let lawyerName = "";
+      const roleNormalized = role?.toString().toLowerCase();
 
       if (userId) {
         const user = await User.findById(userId);
@@ -96,8 +99,11 @@ class QuestionService {
       if (status && !['myanswers', 'waiting'].includes(normalizedFilter || '')) filterQuery.status = status;
       if (category) filterQuery.category = category;
 
+      const isClient = roleNormalized === "client";
+      const isLawyer = roleNormalized === "lawyer";
+
       // Apply specialized filters for the social-style tabs
-      if (normalizedFilter === 'waiting' && userId) {
+      if (normalizedFilter === 'waiting' && userId && isLawyer) {
         // Show questions the lawyer (logged-in user) has NOT answered (by ID or Name)
         // Also ensure we don't strictly filter by 'pending' status so they can see all joinable chats
         filterQuery.answer = {
@@ -111,24 +117,38 @@ class QuestionService {
           }
         };
       } else if (normalizedFilter === 'waiting') {
+        // Guests/clients: default to pending
         filterQuery.status = 'pending';
       } else if (normalizedFilter === 'myanswers') {
         if (!userId) {
           return { questions: [], pagination: { total: 0, page, limit, pages: 0 } };
         }
-        // Find questions where the user has provided an answer (by ID or Name)
-        filterQuery.answer = {
-          $elemMatch: {
-            $or: [
-              { lawyer_id: new mongoose.Types.ObjectId(userId.toString()) },
-              { lawyer_name: { $regex: new RegExp(`^${lawyerName}$`, 'i') } }
-            ]
-          }
-        };
+        if (isClient) {
+          // Client: only show the client's questions that have at least one answer
+          filterQuery.clientId = new mongoose.Types.ObjectId(userId.toString());
+          // answer is an array; require at least 1 element
+          filterQuery["answer.0"] = { $exists: true };
+        } else {
+          // Lawyer: keep existing behavior (filter answers by lawyer_id/lawyer_name)
+          filterQuery.answer = {
+            $elemMatch: {
+              $or: [
+                { lawyer_id: new mongoose.Types.ObjectId(userId.toString()) },
+                { lawyer_name: { $regex: new RegExp(`^${lawyerName}$`, 'i') } }
+              ]
+            }
+          };
+        }
       } else if (normalizedFilter === 'bookmarks' && userId) {
         const bookmarks = await Bookmark.find({ userId: new mongoose.Types.ObjectId(userId.toString()), questionId: { $exists: true } });
         const questionIds = bookmarks.map(b => b.questionId);
         filterQuery._id = { $in: questionIds };
+      } else if (normalizedFilter === 'myquestions') {
+        // Client-only filter: only show questions created by the logged-in client
+        if (!isClient || !userId) {
+          return { questions: [], pagination: { total: 0, page, limit, pages: 0 } };
+        }
+        filterQuery.clientId = new mongoose.Types.ObjectId(userId.toString());
       }
 
       // Calculate pagination
@@ -159,8 +179,8 @@ class QuestionService {
         // Add bookmark status
         questionObj.isBookmarked = userId ? userBookmarks.includes(questionObj._id.toString()) : false;
 
-        // If it's the 'my_answers' tab, only show the current lawyer's answers
-        if (normalizedFilter === 'myanswers' && userId && questionObj.answer) {
+        // If it's the lawyer-specific 'my_answers' tab, only show the current lawyer's answers
+        if (normalizedFilter === 'myanswers' && isLawyer && userId && questionObj.answer) {
           const currentLawyerId = userId.toString().toLowerCase();
           const currentLawyerName = lawyerName.toLowerCase();
 

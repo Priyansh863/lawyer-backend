@@ -84,7 +84,7 @@ export default class MeetingController {
       }
 
       // Determine the actual rate to use
-      const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
+      const lawyer = await User.findById(lawyerId).select('charges video_rate first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
           success: false,
@@ -98,12 +98,14 @@ export default class MeetingController {
       } else if (custom_fee && hourly_rate !== undefined) {
         actualRate = hourly_rate;
       } else {
-        // Use lawyer's default rate
-        actualRate = lawyer.charges || 0;
+        // Use lawyer's default rate based on consultation type
+        actualRate = consultation_type === 'video' 
+          ? (lawyer.video_rate || lawyer.charges || 0) 
+          : (lawyer.charges || 0);
       }
 
       // If client is creating meeting, check token balance for paid consultations
-      if (user.account_type === 'client' && consultation_type === 'paid' && actualRate > 0) {
+      if (user.account_type === 'client' && consultation_type !== 'free' && actualRate > 0) {
         // Check client's token balance
         const clientTokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
         if (!clientTokenBalance || clientTokenBalance.current_balance < actualRate) {
@@ -160,7 +162,7 @@ export default class MeetingController {
 
       // If client created meeting and it's auto-approved (or if lawyer created), deduct tokens
       let tokenInfo = null;
-      if (user.account_type === 'client' && status === EMeetingStatus.APPROVED && consultation_type === 'paid' && actualRate > 0) {
+      if (user.account_type === 'client' && status === EMeetingStatus.APPROVED && consultation_type !== 'free' && actualRate > 0) {
         if (actualRate > 0) {
           try {
             // Deduct tokens from client's balance
@@ -204,7 +206,7 @@ export default class MeetingController {
 
       // Populate lawyer and client details for response
       const populatedMeeting = await Meeting.findById(meeting._id)
-        .populate('lawyer_id', 'first_name last_name email account_type charges')
+        .populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
         .populate('client_id', 'first_name last_name email account_type')
 
       // Send notifications for meeting request
@@ -299,7 +301,7 @@ export default class MeetingController {
     
 
       // Get lawyer info for token deduction
-      const lawyer = await User.findById(meeting.lawyer_id).select('charges first_name last_name');
+      const lawyer = await User.findById(meeting.lawyer_id).select('charges video_rate first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
           success: false,
@@ -308,7 +310,7 @@ export default class MeetingController {
       }
 
       // Check if client has sufficient tokens before approving
-      const tokensRequired = lawyer.charges || 0;
+      const tokensRequired = meeting.hourly_rate || 0;
       let tokenInfo = null;
       
       if (tokensRequired > 0) {
@@ -365,7 +367,7 @@ export default class MeetingController {
           approval_date: new Date()
         },
         { new: true }
-      ).populate('lawyer_id', 'first_name last_name email account_type charges')
+      ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
        .populate('client_id', 'first_name last_name email account_type');
 
       // Send notification for video consultation approval
@@ -435,7 +437,7 @@ export default class MeetingController {
           rejection_reason: rejection_reason || 'No reason provided'
         },
         { new: true }
-      ).populate('lawyer_id', 'first_name last_name email account_type')
+      ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
        .populate('client_id', 'first_name last_name email account_type');
 
       // Send notification for meeting rejection
@@ -488,7 +490,7 @@ export default class MeetingController {
       }
 
       const meetings = await Meeting.find(query)
-        .populate('lawyer_id', 'first_name last_name email account_type charges')
+        .populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
         .populate('client_id', 'first_name last_name email account_type')
         .sort({ createdAt: -1 });
 
@@ -531,7 +533,7 @@ export default class MeetingController {
       }
 
       const meetings = await Meeting.find(query)
-        .populate('lawyer_id', 'first_name last_name email account_type charges')
+        .populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
         .populate('client_id', 'first_name last_name email account_type')
         .sort({ created_at: -1 });
 
@@ -565,7 +567,7 @@ export default class MeetingController {
           { lawyer_id: user_id },
           { client_id: user_id }
         ]
-      }).populate('lawyer_id', 'first_name last_name email account_type')
+      }).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
        .populate('client_id', 'first_name last_name email account_type');
 
       if (!meeting) {
@@ -640,7 +642,7 @@ export default class MeetingController {
         meetingId,
         { status },
         { new: true }
-      ).populate('lawyer_id', 'first_name last_name email account_type')
+      ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
        .populate('client_id', 'first_name last_name email account_type');
 
       // Send notifications for meeting status changes
@@ -774,7 +776,10 @@ export default class MeetingController {
         } else if (updateData.custom_fee && updateData.hourly_rate !== undefined) {
           newRate = updateData.hourly_rate;
         } else if (!updateData.custom_fee) {
-          newRate = lawyer.charges || 0;
+          // Use appropriate rate based on consultation type
+          newRate = newConsultationType === 'video' 
+            ? (lawyer.video_rate || lawyer.charges || 0) 
+            : (lawyer.charges || 0);
         } else {
           newRate = meeting.hourly_rate; // Keep existing rate
         }
@@ -782,8 +787,8 @@ export default class MeetingController {
         updateData.hourly_rate = newRate;
 
         // If changing to a paid consultation or increasing rate, check client token balance
-        if (newConsultationType === 'paid' && newRate > 0) {
-          const currentPaidAmount = meeting.consultation_type === 'paid' ? meeting.hourly_rate : 0;
+        if (newConsultationType !== 'free' && newRate > 0) {
+          const currentPaidAmount = meeting.consultation_type !== 'free' ? meeting.hourly_rate : 0;
           const rateDifference = newRate - currentPaidAmount;
 
           if (rateDifference > 0) {
