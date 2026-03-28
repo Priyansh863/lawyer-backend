@@ -230,6 +230,11 @@ export class CaseController {
         case_type,
         court_type,
         status = "pending",
+        priority,
+        expected_duration,
+        est_duration,
+        case_number: providedCaseNumber,
+        case_identifier,
         files = []
       } = req.body;
 
@@ -260,15 +265,20 @@ export class CaseController {
         });
       }
 
-      // Generate case number
-      const lastCase = await Case.findOne().sort({ created_at: -1 });
-      console.log('Found last case:', lastCase);
-
-      let caseNumber = 'CASE-001';
+      let caseNumber = providedCaseNumber;
       
-      if (lastCase && lastCase.case_number) {
-        const lastNumber = parseInt(lastCase.case_number.split('-')[1]);
-        caseNumber = `CASE-${String(lastNumber + 1).padStart(3, '0')}`;
+      if (!caseNumber) {
+        const lastCase = await Case.findOne().sort({ created_at: -1 });
+        console.log('Found last case for number generation:', lastCase);
+
+        caseNumber = 'CASE-001';
+        if (lastCase && lastCase.case_number) {
+          const match = lastCase.case_number.match(/CASE-(\d+)/);
+          if (match) {
+            const lastNumber = parseInt(match[1]);
+            caseNumber = `CASE-${String(lastNumber + 1).padStart(3, '0')}`;
+          }
+        }
       }
 
       const newCase = new Case({
@@ -282,6 +292,9 @@ export class CaseController {
         case_type,
         court_type,
         status,
+        priority: priority || "medium",
+        est_duration: est_duration || expected_duration || '',
+        case_identifier,
         files,
         important_dates: []
       });
@@ -375,7 +388,13 @@ export class CaseController {
       delete updates._id;
       delete updates.__v;
       delete updates.created_at;
-      delete updates.case_number;
+      // Allow case_number update? Usually no, but check if we should allow it once
+      // delete updates.case_number;
+      
+      // Map expected_duration to est_duration if provided
+      if (updates.expected_duration && !updates.est_duration) {
+        updates.est_duration = updates.expected_duration;
+      }
 
       const updatedCase = await Case.findByIdAndUpdate(
         id,

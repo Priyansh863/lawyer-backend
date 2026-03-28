@@ -93,7 +93,8 @@ class PostController {
         hashtags,
         usefulLinks,
         status = 'published',
-        image
+        image,
+        images
       } = req.body;
       const userId = req.user?.userId;
 
@@ -145,7 +146,8 @@ class PostController {
         hashtags: hashtags || [],
         usefulLinks: usefulLinks || [],
         status,
-        image: image || undefined
+        image: image || undefined,
+        images: images || []
       });
 
       await newPost.save();
@@ -181,6 +183,7 @@ class PostController {
           shortUrl: newPost.shortUrl,
           qrCodeUrl: newPost.qrCodeUrl,
           image: newPost.image,
+          images: newPost.images,
           status: newPost.status,
           createdAt: newPost.createdAt,
           updatedAt: newPost.updatedAt
@@ -256,6 +259,7 @@ class PostController {
             hashtags: post.hashtags,
             usefulLinks: post.usefulLinks,
             image: post.image,
+            images: post.images,
             customUrl: post.customUrl,
             shortUrl: post.shortUrl,
             qrCodeUrl: post.qrCodeUrl,
@@ -320,6 +324,7 @@ class PostController {
           hashtags: post.hashtags,
           usefulLinks: post.usefulLinks,
           image: post.image,
+          images: post.images,
           customUrl: post.customUrl,
           shortUrl: post.shortUrl,
           qrCodeUrl: post.qrCodeUrl,
@@ -376,6 +381,7 @@ class PostController {
           hashtags: post.hashtags,
           usefulLinks: post.usefulLinks,
           image: post.image,
+          images: post.images,
           customUrl: post.customUrl,
           shortUrl: post.shortUrl,
           qrCodeUrl: post.qrCodeUrl,
@@ -537,6 +543,7 @@ class PostController {
             hashtags: post.hashtags,
             usefulLinks: post.usefulLinks,
             image: post.image,
+            images: post.images,
             customUrl: post.customUrl,
             shortUrl: post.shortUrl,
             qrCodeUrl: post.qrCodeUrl,
@@ -852,7 +859,7 @@ class PostController {
       // Update allowed fields
       const allowedUpdates = [
         'title', 'content', 'status', 'spatialInfo', 
-        'citations', 'hashtag', 'hashtags', 'usefulLinks', 'image'
+        'citations', 'hashtag', 'hashtags', 'usefulLinks', 'image', 'images'
       ];
       
       allowedUpdates.forEach(field => {
@@ -975,6 +982,7 @@ class PostController {
         spatialInfo,
         citations,
         image,
+        images,
         language
       } = req.body;
       const userId = req.user?.userId;
@@ -1132,7 +1140,8 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
         status: 'published',
         isAiGenerated: true,
         aiPrompt: prompt || topic,
-        image: image || undefined
+        image: image || undefined,
+        images: images || (Array.isArray(image) ? image : (image ? [image] : []))
       });
 
       await newPost.save();
@@ -1168,6 +1177,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           shortUrl: newPost.shortUrl,
           qrCodeUrl: newPost.qrCodeUrl,
           image: newPost.image,
+          images: newPost.images,
           status: newPost.status,
           isAiGenerated: newPost.isAiGenerated,
           aiPrompt: newPost.aiPrompt,
@@ -1335,6 +1345,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           hashtags: bookmark.postId.hashtags,
           usefulLinks: bookmark.postId.usefulLinks,
           image: bookmark.postId.image,
+          images: bookmark.postId.images,
           customUrl: bookmark.postId.customUrl,
           shortUrl: bookmark.postId.shortUrl,
           qrCodeUrl: bookmark.postId.qrCodeUrl,

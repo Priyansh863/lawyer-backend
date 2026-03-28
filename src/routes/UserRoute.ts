@@ -28,6 +28,9 @@ userRoute.get("/info/:id", UserController.getUserInfo);
 // Route to get user Cases by Role & ID
 userRoute.get("/cases", Auth, UserController.getCases)
 
+// Get a case by ID (user-scoped route)
+userRoute.get("/cases/:id", Auth, CaseController.getCaseById);
+
 // Route to get related users(clients or lawyers) based on the user's role
 userRoute.get("/users/related", Auth, UserController.getRelatedUsers);
 

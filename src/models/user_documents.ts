@@ -40,6 +40,7 @@ export interface IUserDocument extends Document {
   case_id?: mongoose.Types.ObjectId; // Reference to associated case
   file_size?: number;
   file_type?: string;
+  storage_location?: string | null;
   shared_with: mongoose.Types.ObjectId[]; // Array of user IDs this document is shared with
   is_secure_link?: boolean; // Documents uploaded via secure link
   storage_type: StorageType;
@@ -90,6 +91,11 @@ const UserDocumentSchema: Schema = new Schema(
     },
     file_size: { type: Number },
     file_type: { type: String },
+    storage_location: {
+      type: String,
+      trim: true,
+      default: null
+    },
     shared_with: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"

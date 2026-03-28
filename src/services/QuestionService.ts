@@ -77,7 +77,13 @@ class QuestionService {
       if (userId) {
         const user = await User.findById(userId);
         if (user) {
-          lawyerName = `${user.first_name} ${user.last_name}`;
+          if (user.first_name || user.last_name) {
+            lawyerName = `${user.first_name || ""} ${user.last_name || ""}`.trim();
+          } else if (user.email) {
+            lawyerName = user.email.split('@')[0];
+          } else {
+            lawyerName = "Lawyer";
+          }
         }
       }
 
@@ -111,7 +117,7 @@ class QuestionService {
             $elemMatch: {
               $or: [
                 { lawyer_id: new mongoose.Types.ObjectId(userId.toString()) },
-                { lawyer_name: { $regex: new RegExp(`^${lawyerName}$`, 'i') } }
+                { lawyer_name: lawyerName }
               ]
             }
           }
@@ -134,7 +140,7 @@ class QuestionService {
             $elemMatch: {
               $or: [
                 { lawyer_id: new mongoose.Types.ObjectId(userId.toString()) },
-                { lawyer_name: { $regex: new RegExp(`^${lawyerName}$`, 'i') } }
+                { lawyer_name: lawyerName }
               ]
             }
           };
@@ -186,8 +192,8 @@ class QuestionService {
 
           questionObj.answer = questionObj.answer.filter((ans: any) => {
             const matchesId = ans.lawyer_id?.toString()?.toLowerCase() === currentLawyerId;
-            const matchesName = ans.lawyer_name?.toLowerCase() === currentLawyerName;
-            return matchesId || matchesName;
+            const matchesName = ans.lawyer_name?.trim()?.toLowerCase() === currentLawyerName.trim().toLowerCase();
+            return matchesId || (currentLawyerName && matchesName);
           });
         }
 
@@ -243,67 +249,78 @@ class QuestionService {
     }
   }
 
-  async submitAnswer(questionId: string, answer: string, lawyerId: string, images: string[] = [], location?: string) {
+  async submitAnswer(questionId: string, answerText: string, lawyerId: string, images: string[] = [], location?: string) {
     try {
-      // Find the question and ensure it exists
-      const question = await Question.findById(questionId)
-        .populate('answeredBy', 'first_name last_name');
+      // Get lawyer details for the name
+      const lawyer = await User.findById(lawyerId);
+      if (!lawyer) {
+        console.error(`[Q&A] Lawyer not found for ID: ${lawyerId}`);
+        throw new Error(`Lawyer with ID ${lawyerId} not found`);
+      }
 
-      if (!question) {
+      console.log(`[Q&A] Lawyer found: ${lawyer.first_name} ${lawyer.last_name}`);
+
+      let lawyerName = "Lawyer";
+      if (lawyer.first_name || lawyer.last_name) {
+        lawyerName = `${lawyer.first_name || ""} ${lawyer.last_name || ""}`.trim();
+      } else if (lawyer.email) {
+        lawyerName = lawyer.email.split('@')[0];
+      }
+
+      // DATA CORRECTION: Fix legacy data where 'answer' might be a string instead of an array
+      const existingQuestion = await Question.findById(questionId);
+      if (existingQuestion && typeof existingQuestion.answer === 'string') {
+        console.warn(`[Q&A] Detected malformed 'answer' field (string) on Question ${questionId}. Resetting to array.`);
+        await Question.findByIdAndUpdate(questionId, { $set: { answer: [] } });
+      }
+
+      console.log(`[Q&A] Attempting atomic $push for Question: ${questionId} from Lawyer: ${lawyerName}`);
+
+      const updateData = {
+        $push: {
+          answer: {
+            lawyer_name: lawyerName,
+            lawyer_id: new mongoose.Types.ObjectId(lawyerId),
+            answer: answerText,
+            images: images || [],
+            location: location || "",
+            createdAt: new Date()
+          }
+        },
+        $set: {
+          status: "answered",
+          answeredBy: new mongoose.Types.ObjectId(lawyerId),
+          answeredAt: new Date()
+        }
+      };
+
+      const updatedQuestion = await Question.findByIdAndUpdate(
+        questionId,
+        updateData,
+        { new: true, runValidators: false }
+      ).populate('clientId', 'first_name last_name email account_type')
+       .populate('answeredBy', 'first_name last_name email account_type');
+
+      if (!updatedQuestion) {
+        console.error(`[Q&A] Question not found after findByIdAndUpdate: ${questionId}`);
         return null;
       }
 
-      // Get lawyer details to include lawyer name
-      const lawyer = await User.findById(lawyerId);
-
-      if (!lawyer) {
-        throw new Error("Lawyer not found");
-      }
-
-      const lawyerName = `${lawyer.first_name} ${lawyer.last_name}`;
-
-      // Always add new answer to the array (allow multiple answers from same lawyer)
-      if (!question.answer) {
-        question.answer = [];
-      }
-
-      question.answer.push({
-        lawyer_name: lawyerName,
-        lawyer_id: new mongoose.Types.ObjectId(lawyerId),
-        answer: answer,
-        images: images,
-        location: location
-      });
-
-      question.status = "answered";
-      question.answeredBy = new mongoose.Types.ObjectId(lawyerId);
-      question.answeredAt = new Date();
-
-      // Save the updated question
-      await question.save();
+      console.log(`[Q&A] Question updated successfully, sending notification...`);
 
       // Send notification for new Q&A answer
       try {
         const { NotificationService } = await import('../services/notificationService');
-        const populatedQuestion = await Question.findById(questionId)
-          .populate('clientId', 'first_name last_name email account_type')
-          .populate('answeredBy', 'first_name last_name email account_type');
-
-        if (populatedQuestion) {
-          await NotificationService.notifyQAAnswerPosted(
-            { lawyer_name: lawyerName, answer },
-            populatedQuestion,
-            lawyerId
-          );
-        }
+        await NotificationService.notifyQAAnswerPosted(
+          { lawyer_name: lawyerName, answer: answerText },
+          updatedQuestion,
+          lawyerId
+        );
       } catch (notificationError) {
         console.error('Failed to send Q&A answer notification:', notificationError);
       }
 
-      // Return the updated question with populated fields
-      return await Question.findById(questionId)
-        .populate('clientId', 'first_name last_name email account_type')
-        .populate('answeredBy', 'first_name last_name email account_type');
+      return updatedQuestion;
     } catch (error) {
       console.error("QuestionService submitAnswer error:", error);
       throw error;

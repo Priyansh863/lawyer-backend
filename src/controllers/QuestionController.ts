@@ -10,10 +10,10 @@ class QuestionController {
       const userId = req["id"]; // From auth middleware
       const questionData = req.body;
 
-      if (questionData.question && questionData.question.length > 500) {
+      if (questionData.question && questionData.question.length > 5000) {
         return res.status(400).json({
           success: false,
-          message: "Question cannot exceed 500 characters"
+          message: "Question cannot exceed 5000 characters"
         });
       }
 
@@ -134,10 +134,10 @@ class QuestionController {
         });
       }
 
-      if (answer.length > 500) {
+      if (answer.length > 5000) {
         return res.status(400).json({
           success: false,
-          message: "Answer cannot exceed 500 characters"
+          message: "Answer cannot exceed 5000 characters"
         });
       }
 
@@ -166,7 +166,12 @@ class QuestionController {
       });
 
     } catch (error) {
-      console.error("Error submitting answer:", error);
+      console.error("FULL ERROR STACK - submitAnswer:", error.stack);
+      console.error("Error data:", {
+        id: req.params.id,
+        lawyerId: req["id"],
+        body: req.body
+      });
       res.status(500).json({
         success: false,
         message: error.message || "Failed to submit answer"

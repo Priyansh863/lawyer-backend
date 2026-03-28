@@ -55,6 +55,7 @@ export interface ICase extends Document {
   }[];
   created_at: Date;
   updated_at: Date;
+  case_identifier?: string;
 }
 
 const CaseSchema: Schema = new Schema(
@@ -161,6 +162,10 @@ const CaseSchema: Schema = new Schema(
       type: String,
       trim: true,
       default: ''
+    },
+    case_identifier: {
+      type: String,
+      trim: true
     }
   },
   {

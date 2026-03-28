@@ -286,17 +286,40 @@ export default class MeetingController {
   static async approveMeeting(req: Request, res: Response) {
     try {
       const { meetingId } = req.params;
+      const { meeting_link, notes } = req.body ?? {};
+      const lawyerId = (req as any).user?.userId || (req as any).user?._id;
 
+      if (!lawyerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized"
+        });
+      }
 
-      console.log("approveMeeting", meetingId);
-
-   
-
-      // Find the meeting and verify it belongs to this lawyer
+      // Find the meeting assigned to this lawyer and pending approval
       const meeting = await Meeting.findOne({
         _id: meetingId,
+        lawyer_id: lawyerId,
         status: EMeetingStatus.PENDING_APPROVAL
       });
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: "Meeting request not found or already processed"
+        });
+      }
+
+      const finalMeetingLink =
+        typeof meeting_link === "string" ? meeting_link : meeting.meeting_link;
+
+      // Requirement: do not approve without a meeting link
+      if (!finalMeetingLink || finalMeetingLink.trim() === "") {
+        return res.status(400).json({
+          success: false,
+          message: "meeting_link is required to approve this meeting"
+        });
+      }
 
     
 
@@ -364,7 +387,12 @@ export default class MeetingController {
         meetingId,
         {
           status: EMeetingStatus.APPROVED,
-          approval_date: new Date()
+          approved_at: new Date(),
+          approved_by: lawyerId,
+          meeting_link: finalMeetingLink,
+          notes: typeof notes === "string" ? notes : meeting.notes,
+          updated_by: lawyerId,
+          updated_at: new Date()
         },
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
@@ -403,24 +431,22 @@ export default class MeetingController {
   static async rejectMeeting(req: Request, res: Response) {
     try {
       const { meetingId } = req.params;
-      const { rejection_reason } = req.body;
-      const lawyer_id = (req as any).user._id;
+      const { rejection_reason } = req.body ?? {};
+      const lawyerId = (req as any).user?.userId || (req as any).user?._id;
 
-      // Validate required fields
-      if (!rejection_reason) {
-        return res.status(400).json({
+      if (!lawyerId) {
+        return res.status(401).json({
           success: false,
-          message: "rejection_reason is required"
+          message: "Unauthorized"
         });
       }
 
-      let query: any = {
-        lawyer_id: lawyer_id,
+      // Find the meeting assigned to this lawyer and pending approval
+      const meeting = await Meeting.findOne({
+        _id: meetingId,
+        lawyer_id: lawyerId,
         status: EMeetingStatus.PENDING_APPROVAL
-      };
-
-      // Find the meeting and verify it belongs to this lawyer
-      const meeting = await Meeting.findOne(query);
+      });
 
       if (!meeting) {
         return res.status(404).json({
@@ -429,12 +455,17 @@ export default class MeetingController {
         });
       }
 
+      const reason =
+        typeof rejection_reason === "string" ? rejection_reason : "";
+
       // Update meeting to rejected status
       const updatedMeeting = await Meeting.findByIdAndUpdate(
         meetingId,
         { 
           status: EMeetingStatus.REJECTED,
-          rejection_reason: rejection_reason || 'No reason provided'
+          rejection_reason: reason,
+          updated_by: lawyerId,
+          updated_at: new Date()
         },
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
@@ -445,14 +476,14 @@ export default class MeetingController {
         await NotificationService.createNotification({
           userId: updatedMeeting.client_id._id,
           title: 'Meeting Request Rejected',
-          message: `Your meeting request has been rejected. Reason: ${rejection_reason}`,
+          message: `Your meeting request has been rejected. Reason: ${reason}`,
           type: 'video_consultation_started',
           relatedId: meetingId,
           relatedType: 'meeting',
           redirectUrl: `/meetings/${meetingId}`,
           priority: 'high',
-          metadata: { rejectionReason: rejection_reason },
-          createdBy: lawyer_id
+          metadata: { rejectionReason: reason },
+          createdBy: lawyerId
         });
       } catch (notificationError) {
         console.error('Failed to send meeting rejection notification:', notificationError);

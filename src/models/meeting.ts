@@ -240,6 +240,11 @@ MeetingSchema.virtual('time').get(function(this: IMeeting) {
   return this.requested_time || this.scheduled_time;
 });
 
+// Virtual compatibility alias for frontend
+MeetingSchema.virtual('approval_date').get(function(this: IMeeting) {
+  return this.approved_at;
+});
+
 // Pre-save hook to update status and handle workflow
 MeetingSchema.pre<IMeeting>('save', function(next) {
   const now = new Date();

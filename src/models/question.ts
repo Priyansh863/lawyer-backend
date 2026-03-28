@@ -7,6 +7,7 @@ export interface IAnswer {
   answer: string;
   images?: string[];
   location?: string;
+  createdAt?: Date;
 }
 
 export interface IQuestion extends Document {
@@ -16,7 +17,7 @@ export interface IQuestion extends Document {
   category: string;
   tags?: string[];
   images?: string[];
-  answer?: IAnswer[]; // nullable by default
+  answer?: IAnswer[]; // Array of answers
   status: "pending" | "answered";
   clientId: mongoose.Types.ObjectId;
   answeredBy?: mongoose.Types.ObjectId;
@@ -24,6 +25,33 @@ export interface IQuestion extends Document {
   createdAt: Date;
   updatedAt: Date;
 }
+
+const AnswerSchema = new Schema<IAnswer>({
+  lawyer_name: {
+    type: String,
+    required: [true, "Lawyer name is required"]
+  },
+  lawyer_id: {
+    type: Schema.Types.ObjectId,
+    ref: "User"
+  },
+  answer: {
+    type: String,
+    required: [true, "Answer is required"],
+    maxlength: [5000, "Answer cannot exceed 5000 characters"]
+  },
+  images: {
+    type: [String],
+    default: []
+  },
+  location: {
+    type: String
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
 
 const QuestionSchema = new Schema<IQuestion>(
   {
@@ -52,29 +80,8 @@ const QuestionSchema = new Schema<IQuestion>(
       default: []
     },
     answer: {
-      type: [{
-        lawyer_name: {
-          type: String,
-          required: true
-        },
-        lawyer_id: {
-          type: Schema.Types.ObjectId,
-          ref: "User"
-        },
-        answer: {
-          type: String,
-          required: true,
-          maxlength: [5000, "Answer cannot exceed 5000 characters"]
-        },
-        images: {
-          type: [String],
-          default: []
-        },
-        location: {
-          type: String
-        }
-      }],
-      default: [] // empty array by default
+      type: [AnswerSchema],
+      default: []
     },
     status: {
       type: String,

@@ -30,7 +30,8 @@ export default class DocumentController {
         file_size,
         case_id,
         associated_user_id,
-        storage_type
+        storage_type,
+        storage_location
       } = req.body;
 
       // Validate required fields
@@ -82,7 +83,8 @@ export default class DocumentController {
         document_type: 'general', // Always general, no user selection
         privacy: privacy || 'public',
         file_size: file_size,
-        storage_type: storage_type || 'cloud'
+        storage_type: storage_type || 'cloud',
+        storage_location: storage_location || null
       };
 
       // Only add case_id if privacy is private and case_id is provided
@@ -104,7 +106,8 @@ export default class DocumentController {
           document_type: 'general', // Always general, no user selection
           privacy: privacy || 'public',
           file_size: file_size,
-          storage_type: storage_type || 'cloud'
+          storage_type: storage_type || 'cloud',
+          storage_location: storage_location || null
         };
         await UserDocument.create(documentData);
       }
@@ -195,6 +198,7 @@ export default class DocumentController {
         file_size,
         file_type,
         storage_type,
+        storage_location,
         privacy
       } = req.body;
 
@@ -215,6 +219,7 @@ export default class DocumentController {
         file_size: file_size || 0,                  // 0 size to signal folder
         file_type: file_type || 'folder',
         storage_type: storage_type || StorageType.CLOUD,
+        storage_location: storage_location || null,
         privacy: privacy || DocumentPrivacy.PRIVATE,
         document_type: DocumentType.GENERAL,
         shared_with: [],

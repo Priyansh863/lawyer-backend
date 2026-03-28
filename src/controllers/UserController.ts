@@ -214,7 +214,9 @@ class UserController {
         client_password,
         priority,
         expected_duration,
+        est_duration,
         notes,
+        case_identifier,
         lawyer_id,
         status
       } = req.body;
@@ -265,6 +267,7 @@ class UserController {
       // Create case with all required fields
       const caseData = {
         case_number: caseNumber,
+        case_identifier,
         title,
         description,
         summary: description, // Use description as summary for now
@@ -273,6 +276,9 @@ class UserController {
         client_id: clientId,
         lawyer_id: lawyer_id || userId,
         status: status || 'open',
+        priority: priority || 'medium',
+        est_duration: est_duration || expected_duration || '',
+        notes: notes || '',
         key_points: notes ? [notes] : [],
         important_dates: [],
         documents: [],

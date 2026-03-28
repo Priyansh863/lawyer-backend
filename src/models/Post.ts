@@ -38,6 +38,7 @@ export interface IPost extends Document {
   isAiGenerated?: boolean;
   aiPrompt?: string;
   image?: string;
+  images?: string[];
   createdAt: Date;
   updatedAt: Date;
   
@@ -196,6 +197,10 @@ const PostSchema: Schema = new Schema({
   image: {
     type: String,
     maxlength: 200000
+  },
+  images: {
+    type: [String],
+    default: []
   }
 }, {
   timestamps: true

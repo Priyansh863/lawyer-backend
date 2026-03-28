@@ -15,9 +15,38 @@ const dataBaseConfig = async () => {
       throw new Error(`Unable to connect to database: ${error.message}`);
     });
     
-    mongoose.connection.once("open", () => {
-      console.log("MongoDB connection is open and ready");
-    });
+    // MIGRATION: Auto-fix legacy string-based 'answer' fields
+    try {
+      const db = mongoose.connection.db;
+      if (db) {
+        console.log("[Migration] Checking for malformed Q&A data...");
+        // Convert all 'answer' fields that are strings into arrays
+        const cursor = db.collection('questions').find({ answer: { $type: "string" } });
+        let count = 0;
+        while (await cursor.hasNext()) {
+          const doc = await cursor.next();
+          if (doc && (typeof doc.answer === 'string' && doc.answer.length > 0)) {
+            const lawyerId = doc.answeredBy || doc.lawyer_id || null;
+            await db.collection('questions').updateOne(
+              { _id: doc._id },
+              { $set: { 
+                  answer: [{
+                    lawyer_name: "Legacy Response",
+                    lawyer_id: lawyerId,
+                    answer: doc.answer,
+                    createdAt: doc.answeredAt || doc.updatedAt || new Date()
+                  }] 
+                } 
+              }
+            );
+            count++;
+          }
+        }
+        if (count > 0) console.log(`[Migration] Fixed ${count} legacy question(s).`);
+      }
+    } catch (migError) {
+      console.warn("[Migration] Skipped or failed:", migError.message);
+    }
     
     return mongoose.connection;
   } catch (err) {
