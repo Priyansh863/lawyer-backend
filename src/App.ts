@@ -39,8 +39,8 @@ app.use(cors({
   credentials: true, // Set to true if you need to allow cookies or HTTP authentication
 }));
 const port = envConfig.port;
-app.use(express.json({ limit: "5mb" }));
-app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/user", userRoute);
