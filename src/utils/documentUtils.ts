@@ -1,6 +1,67 @@
 import axios from 'axios';
+import zlib from 'zlib';
+
 const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
+
+/**
+ * Compress base64 string using zlib (GZIP)
+ * Handles data URL prefix if present
+ */
+export function compressBase64(base64String: string): string {
+  if (!base64String || base64String.trim() === "") return base64String;
+  
+  try {
+    const hasPrefix = base64String.includes(",");
+    const base64Data = hasPrefix ? base64String.split(",")[1] : base64String;
+    const prefix = hasPrefix ? base64String.split(",")[0] + "," : "";
+
+    const buffer = Buffer.from(base64Data, "base64");
+    const originalSize = buffer.length;
+
+    console.log(`[COMPRESSION] Original Base64 size: ${(originalSize / 1024).toFixed(2)} KB`);
+
+    const compressed = zlib.gzipSync(buffer);
+    const compressedSize = compressed.length;
+    const reduction = ((1 - (compressedSize / originalSize)) * 100).toFixed(2);
+
+    console.log(`[COMPRESSION] Compressed size: ${(compressedSize / 1024).toFixed(2)} KB (Reduced by ${reduction}%)`);
+
+    return prefix + compressed.toString("base64");
+  } catch (error) {
+    console.error("[COMPRESSION] Compression failed:", error);
+    return base64String;
+  }
+}
+
+/**
+ * Decompress base64 string using zlib (GZIP)
+ * Handles both compressed and uncompressed strings
+ */
+export function decompressBase64(base64String: string): string {
+  if (!base64String || base64String.trim() === "") return base64String;
+
+  try {
+    const hasPrefix = base64String.includes(",");
+    const base64Data = hasPrefix ? base64String.split(",")[1] : base64String;
+    const prefix = hasPrefix ? base64String.split(",")[0] + "," : "";
+
+    const buffer = Buffer.from(base64Data, "base64");
+    
+    // Check for GZIP magic numbers (0x1f 0x8b)
+    if (buffer.length > 2 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
+      console.log(`[DECOMPRESSION] Compressed data detected. Decompressing...`);
+      const decompressed = zlib.gunzipSync(buffer);
+      console.log(`[DECOMPRESSION] Decompression successful. Original size restored: ${(decompressed.length / 1024).toFixed(2)} KB`);
+      return prefix + decompressed.toString("base64");
+    }
+    
+    return base64String;
+  } catch (error) {
+    console.warn("[DECOMPRESSION] Decompression failed, assuming non-compressed data:", error);
+    return base64String;
+  }
+}
 
 /**
  * Extract text content from various document types

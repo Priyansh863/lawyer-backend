@@ -1,5 +1,5 @@
 import UserDocument from '../models/user_documents';
-import { extractTextFromDocument, isSupportedDocument, getDocumentType, cleanTextForAI } from '../utils/documentUtils';
+import { extractTextFromDocument, isSupportedDocument, getDocumentType, cleanTextForAI, decompressBase64 } from '../utils/documentUtils';
 import openaiUtils from '../utils/openaiUtils';
 import path from 'path';
 
@@ -8,75 +8,81 @@ const mammoth = require('mammoth');
 
 
 class AIService {
-/**
+  /**
    * Process document: extract content and generate summary (PDF, Image, Video)
    */
-async processDocument(documentId: string): Promise<{ success: boolean; message: string; summary?: string }> {
-  try {
-    // Find the document
-    const document = await UserDocument.findById(documentId);
-    if (!document) {
-      return { success: false, message: 'Document not found' };
-    }
+  async processDocument(documentId: string): Promise<{ success: boolean; message: string; summary?: string }> {
+    try {
+      // Find the document
+      const document = await UserDocument.findById(documentId);
+      if (!document) {
+        return { success: false, message: 'Document not found' };
+      }
 
-    const fileUrl = document.link;
-    const fileBase64 = (document as any).file_base64 as string | undefined;
-    const fileName = document.document_name;
-    const fileType = this.getFileType(fileName);
+      const fileUrl = document.link;
+      let fileBase64 = (document as any).file_base64 as string | undefined;
+      
+      // Decompress if needed
+      if (fileBase64) {
+        fileBase64 = decompressBase64(fileBase64);
+      }
 
-    console.log(`Processing ${fileType} file: ${fileName}`);
+      const fileName = document.document_name;
+      const fileType = this.getFileType(fileName);
 
-    let extractedContent = '';
-    let summary = '';
+      console.log(`Processing ${fileType} file: ${fileName}`);
 
-    switch (fileType) {
-      case 'pdf':
-      case 'docx':
-      case 'doc':
-      case 'txt':
-      case 'text': {
-        // Prefer base64 content if available; fall back to URL-based extraction
-        if (fileBase64 && fileBase64.trim() !== '') {
-          extractedContent = await this.extractTextFromBase64Document(fileBase64, fileName);
-        } else {
-          extractedContent = await extractTextFromDocument(fileUrl, fileName);
+      let extractedContent = '';
+      let summary = '';
+
+      switch (fileType) {
+        case 'pdf':
+        case 'docx':
+        case 'doc':
+        case 'txt':
+        case 'text': {
+          // Prefer base64 content if available; fall back to URL-based extraction
+          if (fileBase64 && fileBase64.trim() !== '') {
+            extractedContent = await this.extractTextFromBase64Document(fileBase64, fileName);
+          } else {
+            extractedContent = await extractTextFromDocument(fileUrl, fileName);
+          }
+          const cleanedContent = cleanTextForAI(extractedContent);
+          summary = await openaiUtils.generateDocumentSummary(cleanedContent);
+          break;
         }
-        const cleanedContent = cleanTextForAI(extractedContent);
-        summary = await openaiUtils.generateDocumentSummary(cleanedContent);
-        break;
-      }
-      
-      case 'image': {
-        const source = fileUrl && fileUrl.trim() !== '' ? fileUrl : (fileBase64 || '');
-        summary = await this.processImage(source, fileName);
-        break;
-      }
-      
-      case 'video': {
-        const source = fileUrl && fileUrl.trim() !== '' ? fileUrl : (fileBase64 || '');
-        summary = await this.processVideo(source, fileName);
-        break;
-      }
-      
-      default:
-        return { success: false, message: `Unsupported file type: ${fileType}` };
-    }
 
-    if (!summary || summary.trim().length === 0) {
-      return { success: false, message: `No content could be extracted from the ${fileType}` };
-    }
+        case 'image': {
+          const source = fileUrl && fileUrl.trim() !== '' ? fileUrl : (fileBase64 || '');
+          summary = await this.processImage(source, fileName);
+          break;
+        }
 
-    // Update document with summary
-    await UserDocument.findByIdAndUpdate(documentId, {
-      summary: summary,
-      status: 'Completed'
-    });
+        case 'video': {
+          const source = fileUrl && fileUrl.trim() !== '' ? fileUrl : (fileBase64 || '');
+          summary = await this.processVideo(source, fileName);
+          break;
+        }
 
-    return { 
-      success: true, 
-      message: `${fileType.toUpperCase()} processed successfully`, 
-      summary 
-    };
+        default:
+          return { success: false, message: `Unsupported file type: ${fileType}` };
+      }
+
+      if (!summary || summary.trim().length === 0) {
+        return { success: false, message: `No content could be extracted from the ${fileType}` };
+      }
+
+      // Update document with summary
+      await UserDocument.findByIdAndUpdate(documentId, {
+        summary: summary,
+        status: 'Completed'
+      });
+
+      return {
+        success: true,
+        message: `${fileType.toUpperCase()} processed successfully`,
+        summary
+      };
   } catch (error) {
     console.error('Error processing document:', error);
     

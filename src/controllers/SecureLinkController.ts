@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import SecureLink from '../models/SecureLink';
 import { User } from '../models/user';
 import UserDocument from '../models/user_documents';
+import { compressBase64 } from '../utils/documentUtils';
 
 // Define AuthenticatedRequest interface
 interface AuthenticatedRequest extends Request {
@@ -288,7 +289,7 @@ class SecureLinkController {
         document_name: file_name,
         uploaded_by: new mongoose.Types.ObjectId(decoded.client_id),
         link: file_url,
-        file_base64,
+        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
         file_size: file_size || 0,
         file_type: file_name.split('.').pop()?.toLowerCase() || 'unknown',
         status: 'Completed',

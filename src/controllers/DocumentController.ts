@@ -3,6 +3,7 @@ import { uploadImg } from "../utils/fileUpload";
 import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
+import { compressBase64 } from "../utils/documentUtils";
 import path from "path";
 import { User } from "../models/user";
 import Case from "../models/case";
@@ -34,6 +35,8 @@ export default class DocumentController {
         storage_location
       } = req.body;
 
+      console.log(`[API] Received uploadDocumentEnhanced request - Name: ${document_name}, Base64 length: ${file_base64?.length || 0}`);
+
       // Validate required fields
       if (!user_id || !document_name) {
         return res.status(400).json({
@@ -49,6 +52,9 @@ export default class DocumentController {
           message: "Either link or file_base64 is required"
         });
       }
+
+      // Compress base64 if present
+      const processedBase64 = file_base64 ? compressBase64(file_base64) : null;
 
       // Validate case_id logic: only private documents can have case_id
       if (case_id && privacy !== DocumentPrivacy.PRIVATE) {
@@ -78,7 +84,7 @@ export default class DocumentController {
         status: "Completed",
         uploaded_by: user_id,
         link: link,
-        file_base64,
+        file_base64: processedBase64,
         file_type: file_type || fileTypeDisplay,
         document_type: 'general', // Always general, no user selection
         privacy: privacy || 'public',
@@ -101,7 +107,7 @@ export default class DocumentController {
           status: "Pending",
           uploaded_by: associated_user_id,
           link: link,
-          file_base64,
+          file_base64: processedBase64,
           file_type: file_type || fileTypeDisplay,
           document_type: 'general', // Always general, no user selection
           privacy: privacy || 'public',
@@ -260,7 +266,7 @@ export default class DocumentController {
         status: "Pending",
         uploaded_by: userId,
         link: fileUrl,
-        file_base64,
+        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
         privacy
       });
 
@@ -412,7 +418,7 @@ export default class DocumentController {
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
         link: fileUrl,
-        file_base64,
+        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
         privacy,
         file_size: fileSize,
         file_type: fileType,
@@ -514,7 +520,7 @@ export default class DocumentController {
         status: "Pending",
         uploaded_by: userId,
         link: fileUrl,
-        file_base64,
+        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
       });
 
       console.log(`Processing PDF document synchronously: ${doc._id}`);

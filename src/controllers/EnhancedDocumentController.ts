@@ -3,6 +3,7 @@ import { uploadImg } from "../utils/fileUpload";
 import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
+import { compressBase64 } from "../utils/documentUtils";
 import path from "path";
 import { User } from "../models/user";
 import Case from "../models/case";
@@ -93,7 +94,7 @@ export default class EnhancedDocumentController {
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
         link: fileUrl,
-        file_base64,
+        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
         privacy,
         file_size: fileSize,
         file_type: fileType,

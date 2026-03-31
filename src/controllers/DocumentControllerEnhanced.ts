@@ -3,6 +3,7 @@ import { uploadImg } from "../utils/fileUpload";
 import UserDocument, { DocumentPrivacy, DocumentStatus } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
+import { compressBase64 } from "../utils/documentUtils";
 import path from "path";
 import { User } from "../models/user";
 
@@ -53,7 +54,7 @@ export default class DocumentControllerEnhanced {
         status: DocumentStatus.PENDING,
         uploaded_by: client_id, // Document belongs to client
         link: fileUrl,
-        file_base64,
+        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
         file_type: fileTypeDisplay,
         privacy: privacy === 'public' ? DocumentPrivacy.PUBLIC : DocumentPrivacy.PRIVATE,
         shared_with: [] // Initialize empty shared array
@@ -220,7 +221,7 @@ export default class DocumentControllerEnhanced {
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
         link: fileUrl,
-        file_base64,
+        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
         file_type: fileTypeDisplay,
         privacy: privacy === 'public' ? DocumentPrivacy.PUBLIC : DocumentPrivacy.PRIVATE, // Default to private
         shared_with: [] // Initialize empty shared array
