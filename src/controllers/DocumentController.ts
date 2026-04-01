@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { uploadImg } from "../utils/fileUpload";
+import { uploadImg, ingestS3UploadToStoredBase64 } from "../utils/fileUpload";
 import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
@@ -53,9 +53,6 @@ export default class DocumentController {
         });
       }
 
-      // Compress base64 if present
-      const processedBase64 = file_base64 ? compressBase64(file_base64) : null;
-
       // Validate case_id logic: only private documents can have case_id
       if (case_id && privacy !== DocumentPrivacy.PRIVATE) {
         return res.status(400).json({
@@ -63,6 +60,11 @@ export default class DocumentController {
           message: "Case ID can only be assigned to private documents"
         });
       }
+
+      // Pull file from S3 into DB and remove from bucket when only a link was sent
+      const s3Ingest = await ingestS3UploadToStoredBase64(link, file_base64);
+      const processedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : null);
+      const linkForDb = s3Ingest ? undefined : link;
 
       // Get file extension and determine file type
       const fileExtension = path.extname(document_name).toLowerCase();
@@ -83,7 +85,7 @@ export default class DocumentController {
         document_name: document_name,
         status: "Completed",
         uploaded_by: user_id,
-        link: link,
+        link: linkForDb,
         file_base64: processedBase64,
         file_type: file_type || fileTypeDisplay,
         document_type: 'general', // Always general, no user selection
@@ -106,7 +108,7 @@ export default class DocumentController {
           document_name: document_name,
           status: "Pending",
           uploaded_by: associated_user_id,
-          link: link,
+          link: linkForDb,
           file_base64: processedBase64,
           file_type: file_type || fileTypeDisplay,
           document_type: 'general', // Always general, no user selection
@@ -260,13 +262,24 @@ export default class DocumentController {
 
       console.log("re.body=======", req.body)
 
+      if (!userId || !fileName) {
+        return res.status(400).json({
+          success: false,
+          message: "userId and fileName are required"
+        });
+      }
+
+      const s3Ingest = await ingestS3UploadToStoredBase64(fileUrl, file_base64);
+      const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
+      const linkStored = s3Ingest ? undefined : fileUrl;
+
       // Save to MongoDB
       const doc = await UserDocument.create({
         document_name: fileName,
         status: "Pending",
         uploaded_by: userId,
-        link: fileUrl,
-        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
+        link: linkStored,
+        file_base64: storedBase64,
         privacy
       });
 
@@ -289,7 +302,7 @@ export default class DocumentController {
 
         return res.status(200).json({
           success: true,
-          fileUrl,
+          fileUrl: linkStored ?? fileUrl,
           document: doc,
           message: "Document uploaded successfully. AI processing started in background."
         });
@@ -305,7 +318,7 @@ export default class DocumentController {
       }
 
       // For non-PDF files, just return success
-      return res.status(200).json({ success: true, fileUrl, document: doc });
+      return res.status(200).json({ success: true, fileUrl: linkStored ?? fileUrl, document: doc });
     } catch (error: any) {
       console.error("Document upload error:", error);
       return res.status(500).json({ success: false, message: error.message || "Failed to upload document" });
@@ -412,13 +425,17 @@ export default class DocumentController {
         sharedWith = selectedUsers;
       }
 
+      const s3Ingest = await ingestS3UploadToStoredBase64(fileUrl, file_base64);
+      const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
+      const linkStored = s3Ingest ? undefined : fileUrl;
+
       // Save to MongoDB within transaction
       const doc = await UserDocument.create([{
         document_name: fileName,
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
-        link: fileUrl,
-        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
+        link: linkStored,
+        file_base64: storedBase64,
         privacy,
         file_size: fileSize,
         file_type: fileType,
@@ -471,7 +488,7 @@ export default class DocumentController {
 
       return res.status(200).json({
         success: true,
-        fileUrl,
+        fileUrl: linkStored ?? fileUrl,
         document: savedDoc,
         message: "Document uploaded successfully" + (processWithAI && isPDFFile(fileName) ?
           ". AI processing started in background." : "")
@@ -514,13 +531,17 @@ export default class DocumentController {
         });
       }
 
+      const s3Ingest = await ingestS3UploadToStoredBase64(fileUrl, file_base64);
+      const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
+      const linkStored = s3Ingest ? undefined : fileUrl;
+
       // Save to MongoDB
       const doc = await UserDocument.create({
         document_name: fileName,
         status: "Pending",
         uploaded_by: userId,
-        link: fileUrl,
-        file_base64: file_base64 ? compressBase64(file_base64) : undefined,
+        link: linkStored,
+        file_base64: storedBase64,
       });
 
       console.log(`Processing PDF document synchronously: ${doc._id}`);
@@ -537,7 +558,7 @@ export default class DocumentController {
           message: "Document uploaded and processed successfully",
           document: updatedDoc,
           summary: aiResult.summary,
-          fileUrl
+          fileUrl: linkStored ?? fileUrl
         });
       } else {
         // AI processing failed, but document is still saved
@@ -545,7 +566,7 @@ export default class DocumentController {
           success: false,
           message: `Document uploaded but AI processing failed: ${aiResult.message}`,
           document: doc,
-          fileUrl
+          fileUrl: linkStored ?? fileUrl
         });
       }
     } catch (error: any) {
