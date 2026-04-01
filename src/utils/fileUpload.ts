@@ -60,13 +60,14 @@ export type S3IngestResult = { file_base64: string; link: null };
 /**
  * If `fileUrl` points at an object in the configured app bucket, download it,
  * store as compressed base64 (same pipeline as client uploads), delete the S3 object,
- * and return fields to persist. Skips when `file_base64` is already provided.
+ * and return fields to persist.
  */
 export async function ingestS3UploadToStoredBase64(
   fileUrl: string | undefined | null,
-  existingBase64: string | undefined | null
+  existingBase64: string | undefined | null,
+  options?: { force?: boolean }
 ): Promise<S3IngestResult | null> {
-  if (existingBase64 && existingBase64.trim() !== "") {
+  if (!options?.force && existingBase64 && existingBase64.trim() !== "") {
     return null;
   }
   if (!fileUrl || fileUrl.trim() === "") {
@@ -108,6 +109,41 @@ export async function ingestS3UploadToStoredBase64(
     console.error("[S3 ingest] Failed to fetch/delete S3 object:", error);
     return null;
   }
+}
+
+/**
+ * Backend-enforced pipeline:
+ * - take incoming base64 (data URL)
+ * - upload to S3 (temp key)
+ * - GetObject back
+ * - store as compressed base64 (data URL)
+ * - DeleteObject from S3
+ *
+ * Returns null if no base64 provided.
+ */
+export async function roundTripBase64ViaS3ToStoredBase64(
+  file_base64: string | undefined | null,
+  fileName: string,
+  userId: string
+): Promise<S3IngestResult | null> {
+  if (!file_base64 || file_base64.trim() === "") return null;
+
+  const mimeType = file_base64.match(/[^:]\w+\/[\w-+\d.]+(?=;|,)/)?.[0] || "application/octet-stream";
+  const buf = Buffer.from(file_base64.split(",")[1] || "", "base64");
+
+  const key = `temp/${userId}/${Date.now()}/${fileName.replace(/ /g, "_")}`;
+  const putParams = {
+    Bucket: CONFIG.bucket,
+    Key: key,
+    Body: buf,
+    ContentType: mimeType,
+    ACL: ObjectCannedACL.private,
+  };
+
+  await s3Client.send(new PutObjectCommand(putParams));
+  const s3Url = `https://${CONFIG.bucket}.s3.${region}.amazonaws.com/${key}`;
+
+  return ingestS3UploadToStoredBase64(s3Url, file_base64, { force: true });
 }
 
 /**

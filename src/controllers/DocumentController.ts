@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { uploadImg, ingestS3UploadToStoredBase64 } from "../utils/fileUpload";
+import { uploadImg, ingestS3UploadToStoredBase64, roundTripBase64ViaS3ToStoredBase64 } from "../utils/fileUpload";
 import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
@@ -61,9 +61,13 @@ export default class DocumentController {
         });
       }
 
-      // Pull file from S3 into DB and remove from bucket when only a link was sent
-      const s3Ingest = await ingestS3UploadToStoredBase64(link, file_base64);
-      const processedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : null);
+      // Enforced pipeline:
+      // base64 -> S3 upload -> GetObject -> base64 -> DB -> DeleteObject
+      // If base64 isn't provided, fall back to link ingest (GetObject -> base64 -> DB -> DeleteObject).
+      const s3RoundTrip = await roundTripBase64ViaS3ToStoredBase64(file_base64, document_name, user_id);
+      const s3Ingest = s3RoundTrip ?? (await ingestS3UploadToStoredBase64(link, file_base64));
+      const processedBase64 =
+        s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : null);
       const linkForDb = s3Ingest ? undefined : link;
 
       // Get file extension and determine file type
@@ -269,7 +273,8 @@ export default class DocumentController {
         });
       }
 
-      const s3Ingest = await ingestS3UploadToStoredBase64(fileUrl, file_base64);
+      const s3RoundTrip = await roundTripBase64ViaS3ToStoredBase64(file_base64, fileName, userId);
+      const s3Ingest = s3RoundTrip ?? (await ingestS3UploadToStoredBase64(fileUrl, file_base64));
       const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
       const linkStored = s3Ingest ? undefined : fileUrl;
 
@@ -425,7 +430,8 @@ export default class DocumentController {
         sharedWith = selectedUsers;
       }
 
-      const s3Ingest = await ingestS3UploadToStoredBase64(fileUrl, file_base64);
+      const s3RoundTrip = await roundTripBase64ViaS3ToStoredBase64(file_base64, fileName, userId);
+      const s3Ingest = s3RoundTrip ?? (await ingestS3UploadToStoredBase64(fileUrl, file_base64));
       const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
       const linkStored = s3Ingest ? undefined : fileUrl;
 
@@ -531,7 +537,8 @@ export default class DocumentController {
         });
       }
 
-      const s3Ingest = await ingestS3UploadToStoredBase64(fileUrl, file_base64);
+      const s3RoundTrip = await roundTripBase64ViaS3ToStoredBase64(file_base64, fileName, userId);
+      const s3Ingest = s3RoundTrip ?? (await ingestS3UploadToStoredBase64(fileUrl, file_base64));
       const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
       const linkStored = s3Ingest ? undefined : fileUrl;
 
