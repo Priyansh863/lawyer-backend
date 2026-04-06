@@ -31,8 +31,22 @@ router.post("/accessible", Auth, DocumentController.getAccessibleDocuments);
 // GET /api/v1/document/client/:clientId - Get all documents for a specific client
 router.get("/client/:clientId", Auth, DocumentController.getClientDocuments);
 
+// GET /api/v1/document/lawyer/:clientId - Get client documents visible to the authenticated lawyer
+router.get("/lawyer/:clientId", Auth, DocumentController.getLawyerDocuments);
+
 // GET /api/v1/document/case/:caseId - Get documents for a specific case
 router.get("/case/:caseId", Auth, DocumentController.getCaseDocuments);
+
+// POST /api/v1/document/generate-secure-link - Generate a secure link
+router.post("/generate-secure-link", Auth, DocumentController.generateSecureLink);
+
+// GET /api/v1/document/:id/view - View document (decompressed base64)
+router.get("/:id/view", Auth, DocumentController.viewDocument);
+router.get("/view/:id", Auth, DocumentController.viewDocument);
+
+// GET /api/v1/document/:id/download - Download document (decompressed base64)
+router.get("/:id/download", Auth, DocumentController.downloadDocument);
+router.get("/download/:id", Auth, DocumentController.downloadDocument);
 
 // GET /api/v1/document/:id - Get document by ID
 router.get("/:id", Auth, DocumentController.getDocumentById);

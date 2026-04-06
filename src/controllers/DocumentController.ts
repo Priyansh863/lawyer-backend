@@ -3,7 +3,7 @@ import { uploadImg, ingestS3UploadToStoredBase64, roundTripBase64ViaS3ToStoredBa
 import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
-import { compressBase64 } from "../utils/documentUtils";
+import { compressBase64, decompressBase64 } from "../utils/documentUtils";
 import path from "path";
 import { User } from "../models/user";
 import Case from "../models/case";
@@ -588,44 +588,226 @@ export default class DocumentController {
   /**
    * Get documents for a specific client
    */
+  private static normalizeDocumentForUI(doc: any) {
+    const createdAtValue = doc?.createdAt ?? doc?.created_at ?? null;
+    const created_atValue = doc?.created_at ?? doc?.createdAt ?? null;
+
+    // Decompress file_base64 if present so frontend can download
+    let fileBase64 = doc?.file_base64 ?? null;
+    if (fileBase64) {
+      try {
+        fileBase64 = decompressBase64(fileBase64);
+      } catch (e) {
+        console.error('[normalizeDocumentForUI] decompression failed, returning raw value');
+      }
+    }
+
+    return {
+      // UI expects `id` (string) instead of `_id`
+      id: doc?._id ? doc._id.toString() : undefined,
+      document_name: doc?.document_name ?? null,
+      link: doc?.link ?? null,
+      file_base64: fileBase64,
+      createdAt: createdAtValue,
+      created_at: created_atValue,
+      privacy: doc?.privacy ?? null,
+      file_type: doc?.file_type ?? null,
+      file_size: doc?.file_size ?? null,
+      storage_type: doc?.storage_type ?? null,
+      storage_location: doc?.storage_location ?? null,
+      shared_with: Array.isArray(doc?.shared_with)
+        ? doc.shared_with.map((u: any) => (u?.toString ? u.toString() : u))
+        : [],
+    };
+  }
+
   static async getClientDocuments(req: Request, res: Response) {
     try {
       const { clientId } = req.params;
       const { status } = req.query;
       const requesterId = (req as any).id;
       const requesterRole = (req as any).role;
-      const userObjectId = new mongoose.Types.ObjectId(clientId);
-
-      const query: any = { uploaded_by: userObjectId };
-
-      // Security check: If requester is not the document owner and not an admin
-      if (requesterId !== clientId && requesterRole !== 'admin') {
-        // Only return public documents or documents specifically shared with the requester
-        query.$or = [
-          { privacy: DocumentPrivacy.PUBLIC },
-          { shared_with: requesterId }
-        ];
+      if (!mongoose.Types.ObjectId.isValid(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid clientId",
+        });
+      }
+      if (!mongoose.Types.ObjectId.isValid(requesterId)) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid requester id in token",
+        });
       }
 
-      if (status && status !== 'all') {
-        query.status = status;
+      const clientObjectId = new mongoose.Types.ObjectId(clientId);
+      const requesterObjectId = new mongoose.Types.ObjectId(requesterId);
+
+      // Requirement: this endpoint must only return documents owned by the client.
+      const baseQuery: any = { uploaded_by: clientObjectId };
+      const isOwnerOrAdmin = requesterId === clientId || requesterRole === "admin";
+
+      const conditions: any[] = [baseQuery];
+
+      // Requirement: privacy controls who can see private/fully_private documents.
+      if (!isOwnerOrAdmin) {
+        conditions.push({
+          $or: [
+            // Public docs are visible to any authenticated user.
+            { privacy: DocumentPrivacy.PUBLIC },
+            // Private/fully_private docs are visible only if shared with the requesting lawyer.
+            {
+              privacy: { $in: [DocumentPrivacy.PRIVATE, DocumentPrivacy.FULLY_PRIVATE] },
+              shared_with: requesterObjectId,
+            },
+          ],
+        });
       }
 
-      console.log("Fetching client documents with query:", query);
+      if (status && status !== "all") {
+        conditions.push({ status });
+      }
 
-      const documents = await UserDocument.find(query)
-        .populate('uploaded_by', 'first_name last_name email')
-        .sort({ createdAt: -1 });
+      const matchQuery = conditions.length === 1 ? conditions[0] : { $and: conditions };
+
+      const documents = await UserDocument.find(matchQuery).lean();
+
+      const getCreatedMs = (d: any) => {
+        const v = d?.createdAt ?? d?.created_at;
+        if (!v) return 0;
+        const dt = v instanceof Date ? v : new Date(v);
+        const ms = dt.getTime();
+        return Number.isFinite(ms) ? ms : 0;
+      };
+
+      documents.sort((a: any, b: any) => getCreatedMs(b) - getCreatedMs(a));
 
       res.json({
         success: true,
-        data: documents
+        data: documents.map(DocumentController.normalizeDocumentForUI),
       });
     } catch (error: any) {
       console.error('Error fetching client documents:', error);
       res.status(500).json({
         success: false,
         message: error.message || 'Failed to fetch client documents'
+      });
+    }
+  }
+
+  /**
+   * Get documents for a selected client that are visible to the authenticated lawyer.
+   * Endpoint: GET /api/v1/document/lawyer/:clientId
+   */
+  static async getLawyerDocuments(req: Request, res: Response) {
+    try {
+      const { clientId } = req.params;
+      const { status } = req.query;
+      const requesterId = (req as any).id;
+      const requesterRole = (req as any).role;
+
+      if (!mongoose.Types.ObjectId.isValid(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid clientId",
+        });
+      }
+      if (!mongoose.Types.ObjectId.isValid(requesterId)) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid requester id in token",
+        });
+      }
+
+      const clientObjectId = new mongoose.Types.ObjectId(clientId);
+      const requesterObjectId = new mongoose.Types.ObjectId(requesterId);
+
+      const requesterHasClientCases = await Case.exists({
+        client_id: clientObjectId,
+        lawyer_id: requesterObjectId,
+      });
+
+      const requesterCases = await Case.find({
+        client_id: clientObjectId,
+        lawyer_id: requesterObjectId,
+      })
+        .select("_id")
+        .lean();
+
+      const caseIdsForRequester = requesterCases.map((c: any) => c._id);
+
+      // Association:
+      // - always include client-owned uploads (uploaded_by == clientId)
+      // - for case-related documents, only include those whose case_id is in the
+      //   requesting lawyer's cases for this client (prevents leaking other lawyers' case docs)
+      const associationQuery: any =
+        caseIdsForRequester.length > 0
+          ? { $or: [{ uploaded_by: clientObjectId }, { case_id: { $in: caseIdsForRequester } }] }
+          : { uploaded_by: clientObjectId };
+
+      const isAdmin = requesterRole === "admin";
+      const isRequesterClient = requesterId === clientId;
+
+      // Privacy:
+      // - if requesting lawyer has at least one case for this client: do not require shared_with for `private` docs
+      // - otherwise: keep current rule (public OR private/fully_private only if shared_with contains the lawyer)
+      // - `fully_private` is still protected by shared_with (unless requester is the client or admin)
+      let privacyQuery: any = {};
+      if (!isAdmin && !isRequesterClient) {
+        if (requesterHasClientCases) {
+          privacyQuery = {
+            $or: [
+              { privacy: DocumentPrivacy.PUBLIC },
+              { privacy: DocumentPrivacy.PRIVATE },
+              {
+                privacy: DocumentPrivacy.FULLY_PRIVATE,
+                shared_with: requesterObjectId,
+              },
+            ],
+          };
+        } else {
+          privacyQuery = {
+            $or: [
+              { privacy: DocumentPrivacy.PUBLIC },
+              {
+                privacy: { $in: [DocumentPrivacy.PRIVATE, DocumentPrivacy.FULLY_PRIVATE] },
+                shared_with: requesterObjectId,
+              },
+            ],
+          };
+        }
+      }
+
+      const matchQuery: any =
+        Object.keys(privacyQuery).length > 0
+          ? { $and: [associationQuery, privacyQuery] }
+          : associationQuery;
+
+      if (status && status !== "all") {
+        (matchQuery as any).status = status;
+      }
+
+      const documents = await UserDocument.find(matchQuery).lean();
+
+      const getCreatedMs = (d: any) => {
+        const v = d?.createdAt ?? d?.created_at;
+        if (!v) return 0;
+        const dt = v instanceof Date ? v : new Date(v);
+        const ms = dt.getTime();
+        return Number.isFinite(ms) ? ms : 0;
+      };
+
+      documents.sort((a: any, b: any) => getCreatedMs(b) - getCreatedMs(a));
+
+      res.json({
+        success: true,
+        data: documents.map(DocumentController.normalizeDocumentForUI),
+      });
+    } catch (error: any) {
+      console.error("Error fetching lawyer-visible client documents:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to fetch lawyer-visible client documents",
       });
     }
   }
@@ -1334,6 +1516,167 @@ export default class DocumentController {
       res.status(500).json({
         success: false,
         message: error.message || 'Failed to sync documents'
+      });
+    }
+  }
+
+  /**
+   * View document – returns decompressed base64 data URL for frontend viewing
+   * Handles various frontend response formats (viewUrl, fileUrl, file_base64)
+   */
+  static async viewDocument(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const requesterId = (req as any).id;
+      const requesterRole = (req as any).role;
+
+      const document = await UserDocument.findById(id);
+
+      if (!document) {
+        return res.status(404).json({ success: false, message: 'Document not found' });
+      }
+
+      // Security: verify access
+      const isOwner = document.uploaded_by?.toString() === requesterId;
+      const isPublic = document.privacy === DocumentPrivacy.PUBLIC;
+      const isShared = document.shared_with?.some(uid => uid.toString() === requesterId);
+      const isAdmin = requesterRole === 'admin';
+
+      if (!isOwner && !isPublic && !isShared && !isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: You are not authorized to view this document'
+        });
+      }
+
+      let fileUrl = document.link;
+      if (document.file_base64) {
+        fileUrl = decompressBase64(document.file_base64);
+      }
+
+      if (!fileUrl) {
+        return res.status(404).json({ success: false, message: 'No view URL available' });
+      }
+
+      return res.status(200).json({
+        success: true,
+        document_name: document.document_name,
+        file_type: document.file_type,
+        viewUrl: fileUrl,
+        fileUrl: fileUrl,
+        file_base64: fileUrl,
+        // The frontend explicitly looks for the following keys in candidates:
+        url: fileUrl,
+        link: fileUrl,
+        secureUrl: fileUrl
+      });
+    } catch (error: any) {
+      console.error('Error viewing document:', error);
+      return res.status(500).json({ success: false, message: error.message || 'Failed to view document' });
+    }
+  }
+
+  /**
+   * Generate Secure Link
+   * POST /api/v1/document/generate-secure-link
+   */
+  static async generateSecureLink(req: Request, res: Response) {
+    try {
+      const { documentId, fileId } = req.body;
+      const targetId = documentId || fileId; // Frontend currently sends `fileId`
+      
+      if (!targetId) {
+         return res.status(400).json({ success: false, message: 'documentId or fileId is required' });
+      }
+
+      const document = await UserDocument.findById(targetId);
+
+      if (!document) {
+        return res.status(404).json({ success: false, message: 'Document not found' });
+      }
+
+      // Generate a secure link format the frontend expects
+      const secureLinkUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/view-document/${document._id}`;
+      return res.status(200).json({
+        success: true,
+        message: 'Secure link generated successfully',
+        secureLink: secureLinkUrl,
+        secureUrl: secureLinkUrl,
+        url: secureLinkUrl,
+        link: secureLinkUrl
+      });
+    } catch (error: any) {
+      console.error('Error generating secure link:', error);
+      return res.status(500).json({ success: false, message: error.message || 'Failed to generate secure link' });
+    }
+  }
+
+  /**
+   * Download document – returns decompressed base64 data URL for frontend download
+   * GET /api/v1/document/:id/download
+   */
+  static async downloadDocument(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const requesterId = (req as any).id;
+      const requesterRole = (req as any).role;
+
+      const document = await UserDocument.findById(id);
+
+      if (!document) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+
+      // Security: verify access
+      const isOwner = document.uploaded_by?.toString() === requesterId;
+      const isPublic = document.privacy === DocumentPrivacy.PUBLIC;
+      const isShared = document.shared_with?.some(uid => uid.toString() === requesterId);
+      const isAdmin = requesterRole === 'admin';
+
+      if (!isOwner && !isPublic && !isShared && !isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: You are not authorized to download this document'
+        });
+      }
+
+      // If file_base64 exists, decompress and return
+      if (document.file_base64) {
+        const decompressed = decompressBase64(document.file_base64);
+        return res.status(200).json({
+          success: true,
+          document_name: document.document_name,
+          file_type: document.file_type,
+          file_base64: decompressed,
+          // Explicit frontend format: 
+          url: decompressed,
+          link: decompressed
+        });
+      }
+
+      // Fallback: return the link if no base64 stored
+      if (document.link) {
+        return res.status(200).json({
+          success: true,
+          document_name: document.document_name,
+          file_type: document.file_type,
+          link: document.link,
+          url: document.link
+        });
+      }
+
+      return res.status(404).json({
+        success: false,
+        message: 'No downloadable content found for this document'
+      });
+    } catch (error: any) {
+      console.error('Error downloading document:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to download document'
       });
     }
   }

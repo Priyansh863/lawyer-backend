@@ -205,45 +205,34 @@ class PostController {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const status = req.query.status as string;
-      const type = req.query.type as string;
-    
+      const typeNorm = (req.query.type as string | undefined)?.toString().trim().toLowerCase() ?? '';
 
-      // Build filter object
+      // Public feed (same visibility for all roles, including client): all posts matching status, no author scope.
+      // `type=all` is what the web app sends; `dashboard` kept for backward compatibility.
+      // Any other `type` falls back to listing only the authenticated user's posts.
+      const isPublicFeed = typeNorm === 'dashboard' || typeNorm === 'all';
+
       const filter: any = {};
 
-      if (status && status!=='all') {
+      if (status && status !== 'all') {
         filter.status = status;
       }
-      let posts;
-      if(type==="dashboard"){
-        posts = await Post.find({
-          ...filter
-        })
-          .populate('author', 'first_name last_name email avatar')
-          .populate('citations.userId', 'first_name last_name email')
-          .sort({ createdAt: -1 })
+
+      if (!isPublicFeed) {
+        filter.author = req.user?.userId;
       }
-      else{
-      posts = await Post.find({
-        author: req.user?.userId,
-        ...filter
-      })
+
+      const skip = (page - 1) * limit;
+
+      const posts = await Post.find(filter)
         .populate('author', 'first_name last_name email avatar')
         .populate('citations.userId', 'first_name last_name email')
         .sort({ createdAt: -1 })
-      }
+        .skip(skip)
+        .limit(limit);
 
-
-
-      
-
-        console.log(posts,"postspostspostspostspostsposts")
-        
-     
-
-      // Get total count for pagination
       const totalPosts = await Post.countDocuments(filter);
-      const totalPages = Math.ceil(totalPosts / limit);
+      const totalPages = totalPosts === 0 ? 0 : Math.ceil(totalPosts / limit);
 
       res.status(200).json({
         success: true,

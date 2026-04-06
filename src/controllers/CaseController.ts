@@ -176,9 +176,10 @@ export class CaseController {
         });
       }
 
-      const caseData = await Case.findById(id)
-        .populate('client_id', 'first_name last_name email phone')
-        .populate('lawyer_id', 'first_name last_name email');
+      // Populate minimally first; expand sensitive client fields only when allowed.
+      const caseData: any = await Case.findById(id)
+        .populate('client_id', '_id first_name last_name')
+        .populate('lawyer_id', '_id first_name last_name');
 
       if (!caseData) {
         return res.status(404).json({
@@ -199,9 +200,24 @@ export class CaseController {
           });
       }
 
+      // Permission-safe populate:
+      // Only admin or the assigned lawyer can see client's email/phone.
+      if (isAdmin || isLawyer) {
+        await caseData.populate('client_id', '_id first_name last_name email phone');
+      } else {
+        // Keep payload shape stable for frontend, but do not expose sensitive fields.
+        if (caseData.client_id) {
+          caseData.client_id.email = null;
+          caseData.client_id.phone = null;
+        }
+      }
+
       res.json({
         success: true,
-        data: caseData
+        // Keep existing `data` for backwards compatibility, and also include `case`
+        // to match frontend requirement for case details page.
+        data: caseData,
+        case: caseData
       });
     } catch (error) {
       console.error('Error fetching case:', error);
