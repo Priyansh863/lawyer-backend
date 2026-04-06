@@ -11,6 +11,11 @@ import mongoose from "mongoose";
 import { NotificationService } from '../services/notificationService';
 
 export default class DocumentController {
+  private static logPerf(label: string, startedAtMs: number, extra?: Record<string, any>) {
+    const elapsedMs = Date.now() - startedAtMs;
+    const base = extra ? ` ${JSON.stringify(extra)}` : "";
+    console.log(`[perf] ${label} ${elapsedMs}ms${base}`);
+  }
   /**
    * Enhanced upload supporting PDF, Image, and Video files with AI processing
    * @param req.body.file (base64 string)
@@ -334,15 +339,40 @@ export default class DocumentController {
    * Lists all documents from the database
    */
   static async listDocuments(req: any, res: Response) {
+    const t0 = Date.now();
     try {
-      // Fetch user's own documents AND all public documents from other users
-      const documents = await UserDocument.find({
-        $or: [
-          { uploaded_by: req.id }, // User's own documents
-          { privacy: DocumentPrivacy.PUBLIC } // All public documents
-        ]
-      }).sort({ _id: -1 });
-      return res.status(200).json({ success: true, documents });
+      const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+      const limitRaw = parseInt(req.query.limit as string) || 20;
+      const limit = Math.min(Math.max(limitRaw, 1), 50);
+      const skip = (page - 1) * limit;
+
+      // Fetch user's own documents AND all public documents from other users.
+      // Important: exclude large `file_base64` field; UI should fetch content via /:id/view or /:id/download.
+      const query = {
+        $or: [{ uploaded_by: req.id }, { privacy: DocumentPrivacy.PUBLIC }],
+      };
+
+      const [documents, total] = await Promise.all([
+        UserDocument.find(query)
+          .select("-file_base64")
+          .sort({ created_at: -1, createdAt: -1, _id: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        UserDocument.countDocuments(query),
+      ]);
+      DocumentController.logPerf("document.list", t0, { page, limit, returned: documents.length, total });
+
+      return res.status(200).json({
+        success: true,
+        documents,
+        pagination: {
+          currentPage: page,
+          perPage: limit,
+          total,
+          totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+        },
+      });
     } catch (error: any) {
       console.error("List documents error:", error);
       return res.status(500).json({ success: false, message: error.message || "Failed to list documents" });
@@ -588,17 +618,21 @@ export default class DocumentController {
   /**
    * Get documents for a specific client
    */
-  private static normalizeDocumentForUI(doc: any) {
+  private static normalizeDocumentForUI(
+    doc: any,
+    opts: { includeFileBase64?: boolean } = {}
+  ) {
     const createdAtValue = doc?.createdAt ?? doc?.created_at ?? null;
     const created_atValue = doc?.created_at ?? doc?.createdAt ?? null;
 
-    // Decompress file_base64 if present so frontend can download
-    let fileBase64 = doc?.file_base64 ?? null;
-    if (fileBase64) {
+    // Avoid decompressing base64 in list endpoints (slow + large payload).
+    const includeFileBase64 = Boolean(opts.includeFileBase64);
+    let fileBase64: string | null = includeFileBase64 ? (doc?.file_base64 ?? null) : null;
+    if (includeFileBase64 && fileBase64) {
       try {
         fileBase64 = decompressBase64(fileBase64);
       } catch (e) {
-        console.error('[normalizeDocumentForUI] decompression failed, returning raw value');
+        console.error("[normalizeDocumentForUI] decompression failed, returning raw value");
       }
     }
 
@@ -622,6 +656,7 @@ export default class DocumentController {
   }
 
   static async getClientDocuments(req: Request, res: Response) {
+    const t0 = Date.now();
     try {
       const { clientId } = req.params;
       const { status } = req.query;
@@ -670,21 +705,19 @@ export default class DocumentController {
 
       const matchQuery = conditions.length === 1 ? conditions[0] : { $and: conditions };
 
-      const documents = await UserDocument.find(matchQuery).lean();
-
-      const getCreatedMs = (d: any) => {
-        const v = d?.createdAt ?? d?.created_at;
-        if (!v) return 0;
-        const dt = v instanceof Date ? v : new Date(v);
-        const ms = dt.getTime();
-        return Number.isFinite(ms) ? ms : 0;
-      };
-
-      documents.sort((a: any, b: any) => getCreatedMs(b) - getCreatedMs(a));
+      const documents = await UserDocument.find(matchQuery)
+        .select("-file_base64")
+        .sort({ created_at: -1, createdAt: -1, _id: -1 })
+        .lean();
+      DocumentController.logPerf("document.clientDocuments", t0, {
+        clientId,
+        status: status ?? null,
+        returned: documents.length,
+      });
 
       res.json({
         success: true,
-        data: documents.map(DocumentController.normalizeDocumentForUI),
+        data: documents.map((d: any) => DocumentController.normalizeDocumentForUI(d)),
       });
     } catch (error: any) {
       console.error('Error fetching client documents:', error);
@@ -700,6 +733,7 @@ export default class DocumentController {
    * Endpoint: GET /api/v1/document/lawyer/:clientId
    */
   static async getLawyerDocuments(req: Request, res: Response) {
+    const t0 = Date.now();
     try {
       const { clientId } = req.params;
       const { status } = req.query;
@@ -787,21 +821,20 @@ export default class DocumentController {
         (matchQuery as any).status = status;
       }
 
-      const documents = await UserDocument.find(matchQuery).lean();
-
-      const getCreatedMs = (d: any) => {
-        const v = d?.createdAt ?? d?.created_at;
-        if (!v) return 0;
-        const dt = v instanceof Date ? v : new Date(v);
-        const ms = dt.getTime();
-        return Number.isFinite(ms) ? ms : 0;
-      };
-
-      documents.sort((a: any, b: any) => getCreatedMs(b) - getCreatedMs(a));
+      const documents = await UserDocument.find(matchQuery)
+        .select("-file_base64")
+        .sort({ created_at: -1, createdAt: -1, _id: -1 })
+        .lean();
+      DocumentController.logPerf("document.lawyerDocuments", t0, {
+        clientId,
+        status: status ?? null,
+        returned: documents.length,
+        requesterHasClientCases: Boolean(requesterHasClientCases),
+      });
 
       res.json({
         success: true,
-        data: documents.map(DocumentController.normalizeDocumentForUI),
+        data: documents.map((d: any) => DocumentController.normalizeDocumentForUI(d)),
       });
     } catch (error: any) {
       console.error("Error fetching lawyer-visible client documents:", error);
