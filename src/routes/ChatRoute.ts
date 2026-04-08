@@ -53,6 +53,34 @@ router.post('/:chatId/send', [
     .withMessage('Invalid message type')
 ], ChatController.sendMessage);
 
+// Consultation status
+router.get('/:chatId/consultation/status', [
+  authenticateToken,
+  param('chatId')
+    .isMongoId()
+    .withMessage('Invalid chat ID format')
+], ChatController.getConsultationStatus);
+
+// Start consultation (requires both participants to start)
+router.post('/:chatId/consultation/start', [
+  authenticateToken,
+  param('chatId')
+    .isMongoId()
+    .withMessage('Invalid chat ID format')
+], ChatController.startConsultation);
+
+// End consultation (manual or inactivity)
+router.post('/:chatId/consultation/end', [
+  authenticateToken,
+  param('chatId')
+    .isMongoId()
+    .withMessage('Invalid chat ID format'),
+  body('reason')
+    .optional()
+    .isIn(['manual', 'inactivity'])
+    .withMessage('Invalid end reason')
+], ChatController.endConsultation);
+
 // Delete a chat
 router.delete('/:chatId', [
   authenticateToken,

@@ -57,7 +57,19 @@ router.post('/create', [
   body('citations.*.content')
     .optional()
     .isLength({ min: 1, max: 500 })
-    .withMessage('Citation content must be between 1 and 500 characters')
+    .withMessage('Citation content must be between 1 and 500 characters'),
+  body('video')
+    .optional()
+    .isString()
+    .withMessage('video must be a string URL'),
+  body('videos')
+    .optional()
+    .isArray({ max: 3 })
+    .withMessage('videos must be an array with maximum 3 items'),
+  body('videos.*')
+    .optional()
+    .isString()
+    .withMessage('Each video must be a string URL')
 ], PostController.createPost);
 
 // Get all posts with pagination and filtering
@@ -175,7 +187,19 @@ router.put('/update/:id', [
     .notEmpty()
     .withMessage('Post ID is required')
     .isMongoId()
-    .withMessage('Invalid post ID format')
+    .withMessage('Invalid post ID format'),
+  body('video')
+    .optional()
+    .isString()
+    .withMessage('video must be a string URL'),
+  body('videos')
+    .optional()
+    .isArray({ max: 3 })
+    .withMessage('videos must be an array with maximum 3 items'),
+  body('videos.*')
+    .optional()
+    .isString()
+    .withMessage('Each video must be a string URL')
 ], PostController.updatePost);
 
 // Delete post

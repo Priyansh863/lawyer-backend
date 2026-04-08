@@ -15,6 +15,7 @@ export interface ISecureLink extends Document {
   generateSecureUrl(): string;
   validatePassword(password: string): Promise<boolean>;
   markAsUsed(documentId: mongoose.Types.ObjectId): Promise<void>;
+  isExpired(): boolean;
 }
 
 export interface ISecureLinkModel extends mongoose.Model<ISecureLink> {
@@ -90,6 +91,10 @@ SecureLinkSchema.methods.markAsUsed = async function(documentId: mongoose.Types.
   await this.save();
 };
 
+SecureLinkSchema.methods.isExpired = function(): boolean {
+  return new Date() >= this.expires_at;
+};
+
 // Static Methods
 SecureLinkSchema.statics.createSecureLink = async function(
   lawyerId: mongoose.Types.ObjectId,
@@ -146,7 +151,6 @@ SecureLinkSchema.statics.validateLinkToken = async function(token: string): Prom
     // Find the secure link in database
     const secureLink = await this.findOne({
       link_token: token,
-      is_used: false,
       expires_at: { $gt: new Date() }
     }).populate('lawyer_id', 'first_name last_name email')
      .populate('client_id', 'first_name last_name email');

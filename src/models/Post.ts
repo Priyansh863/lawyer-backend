@@ -39,6 +39,8 @@ export interface IPost extends Document {
   aiPrompt?: string;
   image?: string;
   images?: string[];
+  video?: string;
+  videos?: string[];
   createdAt: Date;
   updatedAt: Date;
   
@@ -199,6 +201,14 @@ const PostSchema: Schema = new Schema({
     maxlength: 200000
   },
   images: {
+    type: [String],
+    default: []
+  },
+  video: {
+    type: String,
+    maxlength: 200000
+  },
+  videos: {
     type: [String],
     default: []
   }

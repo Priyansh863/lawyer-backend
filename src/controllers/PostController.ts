@@ -26,6 +26,34 @@ interface AuthenticatedRequest extends Request {
 }
 
 class PostController {
+    private static readonly ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
+    private static readonly VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov'];
+    private static readonly MAX_VIDEOS = 3;
+
+    private static isSupportedVideoUrl(url: string): boolean {
+      const value = (url || '').trim().toLowerCase();
+      if (!value) return false;
+      if (value.startsWith('data:')) {
+        return PostController.ALLOWED_VIDEO_MIME_TYPES.some((mime) => value.startsWith(`data:${mime}`));
+      }
+      return PostController.VIDEO_EXTENSIONS.some((ext) => value.includes(ext));
+    }
+
+    private static validateVideoPayload(video?: string, videos?: string[]): string | null {
+      if (video && !PostController.isSupportedVideoUrl(video)) {
+        return 'Unsupported media type. Allowed video types: video/mp4, video/webm, video/quicktime';
+      }
+      if (videos && !Array.isArray(videos)) {
+        return 'videos must be an array of video URLs';
+      }
+      if (Array.isArray(videos) && videos.length > PostController.MAX_VIDEOS) {
+        return `Maximum ${PostController.MAX_VIDEOS} videos are allowed`;
+      }
+      if (Array.isArray(videos) && videos.some((v) => !PostController.isSupportedVideoUrl(v))) {
+        return 'Unsupported media type. Allowed video types: video/mp4, video/webm, video/quicktime';
+      }
+      return null;
+    }
     private openai: OpenAI | null = null;
     private googleAI: GoogleGenAI | null = null;
     private initPromise: Promise<void> | null = null;
@@ -94,7 +122,9 @@ class PostController {
         usefulLinks,
         status = 'published',
         image,
-        images
+        images,
+        video,
+        videos
       } = req.body;
       const userId = req.user?.userId;
 
@@ -134,6 +164,15 @@ class PostController {
         }
       }
 
+      const videoValidationError = PostController.validateVideoPayload(video, videos);
+      if (videoValidationError) {
+        res.status(400).json({
+          success: false,
+          message: videoValidationError
+        });
+        return;
+      }
+
       // Create new post
       const newPost = new Post({
         title,
@@ -147,7 +186,9 @@ class PostController {
         usefulLinks: usefulLinks || [],
         status,
         image: image || undefined,
-        images: images || []
+        images: images || [],
+        video: video || undefined,
+        videos: videos || []
       });
 
       await newPost.save();
@@ -184,6 +225,8 @@ class PostController {
           qrCodeUrl: newPost.qrCodeUrl,
           image: newPost.image,
           images: newPost.images,
+          video: newPost.video,
+          videos: newPost.videos,
           status: newPost.status,
           createdAt: newPost.createdAt,
           updatedAt: newPost.updatedAt
@@ -249,6 +292,8 @@ class PostController {
             usefulLinks: post.usefulLinks,
             image: post.image,
             images: post.images,
+            video: post.video,
+            videos: post.videos,
             customUrl: post.customUrl,
             shortUrl: post.shortUrl,
             qrCodeUrl: post.qrCodeUrl,
@@ -314,6 +359,8 @@ class PostController {
           usefulLinks: post.usefulLinks,
           image: post.image,
           images: post.images,
+          video: post.video,
+          videos: post.videos,
           customUrl: post.customUrl,
           shortUrl: post.shortUrl,
           qrCodeUrl: post.qrCodeUrl,
@@ -371,6 +418,8 @@ class PostController {
           usefulLinks: post.usefulLinks,
           image: post.image,
           images: post.images,
+          video: post.video,
+          videos: post.videos,
           customUrl: post.customUrl,
           shortUrl: post.shortUrl,
           qrCodeUrl: post.qrCodeUrl,
@@ -533,6 +582,8 @@ class PostController {
             usefulLinks: post.usefulLinks,
             image: post.image,
             images: post.images,
+            video: post.video,
+            videos: post.videos,
             customUrl: post.customUrl,
             shortUrl: post.shortUrl,
             qrCodeUrl: post.qrCodeUrl,
@@ -848,8 +899,17 @@ class PostController {
       // Update allowed fields
       const allowedUpdates = [
         'title', 'content', 'status', 'spatialInfo', 
-        'citations', 'hashtag', 'hashtags', 'usefulLinks', 'image', 'images'
+        'citations', 'hashtag', 'hashtags', 'usefulLinks', 'image', 'images', 'video', 'videos'
       ];
+
+      const videoValidationError = PostController.validateVideoPayload(updates.video, updates.videos);
+      if (videoValidationError) {
+        res.status(400).json({
+          success: false,
+          message: videoValidationError
+        });
+        return;
+      }
       
       allowedUpdates.forEach(field => {
         if (updates[field] !== undefined) {
@@ -972,8 +1032,19 @@ class PostController {
         citations,
         image,
         images,
+        video,
+        videos,
         language
       } = req.body;
+      const videoValidationError = PostController.validateVideoPayload(video, videos);
+      if (videoValidationError) {
+        res.status(400).json({
+          success: false,
+          message: videoValidationError
+        });
+        return;
+      }
+
       const userId = req.user?.userId;
 
       console.log(language,"language selected for AI generation:", language)
@@ -1130,7 +1201,9 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
         isAiGenerated: true,
         aiPrompt: prompt || topic,
         image: image || undefined,
-        images: images || (Array.isArray(image) ? image : (image ? [image] : []))
+        images: images || (Array.isArray(image) ? image : (image ? [image] : [])),
+        video: video || undefined,
+        videos: videos || []
       });
 
       await newPost.save();
@@ -1167,6 +1240,8 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           qrCodeUrl: newPost.qrCodeUrl,
           image: newPost.image,
           images: newPost.images,
+          video: newPost.video,
+          videos: newPost.videos,
           status: newPost.status,
           isAiGenerated: newPost.isAiGenerated,
           aiPrompt: newPost.aiPrompt,
@@ -1335,6 +1410,8 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           usefulLinks: bookmark.postId.usefulLinks,
           image: bookmark.postId.image,
           images: bookmark.postId.images,
+          video: bookmark.postId.video,
+          videos: bookmark.postId.videos,
           customUrl: bookmark.postId.customUrl,
           shortUrl: bookmark.postId.shortUrl,
           qrCodeUrl: bookmark.postId.qrCodeUrl,

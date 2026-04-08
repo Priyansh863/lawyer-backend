@@ -14,6 +14,79 @@ interface AuthenticatedRequest extends Request {
 }
 
 class ChatController {
+  private static readonly INACTIVITY_MS = 5 * 60 * 1000;
+
+  private static isParticipant(chat: any, userId: string): boolean {
+    return chat.lawyer_id.toString() === userId || chat.client_id.toString() === userId;
+  }
+
+  private static async getChatForParticipant(chatId: string, userId: string) {
+    const chat = await Chat.findById(chatId);
+    if (!chat || !ChatController.isParticipant(chat, userId)) {
+      return null;
+    }
+    return chat;
+  }
+
+  private static buildConsultationStatus(chat: any, userId: string) {
+    const startedBy = (chat.consultation_started_by || []).map((id: any) => id.toString());
+    const endedBy = (chat.consultation_ended_by || []).map((id: any) => id.toString());
+    const lastActivityAt = chat.consultation_last_activity_at ? new Date(chat.consultation_last_activity_at) : null;
+    const autoEndAt =
+      chat.consultation_status === "active" && lastActivityAt
+        ? new Date(lastActivityAt.getTime() + ChatController.INACTIVITY_MS)
+        : null;
+
+    return {
+      chat_id: chat._id,
+      status: chat.consultation_status || "pending",
+      started_by_me: startedBy.includes(userId),
+      started_by_other: startedBy.some((id: string) => id !== userId),
+      ended_by_me: endedBy.includes(userId),
+      ended_by_other: endedBy.some((id: string) => id !== userId),
+      started_at: chat.consultation_started_at || null,
+      ended_at: chat.consultation_ended_at || null,
+      auto_end_at: autoEndAt,
+    };
+  }
+
+  private static computeInactiveBillableSeconds(startedAt: Date, endedAt: Date): number {
+    const durationSeconds = Math.max(0, Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000));
+    return Math.max(0, durationSeconds - 300);
+  }
+
+  private static async autoEndIfInactive(chat: any): Promise<any> {
+    if (chat.consultation_status !== "active" || !chat.consultation_last_activity_at || !chat.consultation_started_at) {
+      return chat;
+    }
+
+    const now = Date.now();
+    const lastActivityMs = new Date(chat.consultation_last_activity_at).getTime();
+    if (now < lastActivityMs + ChatController.INACTIVITY_MS) {
+      return chat;
+    }
+
+    const endedAt = new Date(lastActivityMs + ChatController.INACTIVITY_MS);
+    const billableSeconds = ChatController.computeInactiveBillableSeconds(
+      new Date(chat.consultation_started_at),
+      endedAt
+    );
+
+    await Chat.findOneAndUpdate(
+      { _id: chat._id, consultation_status: "active" },
+      {
+        $set: {
+          consultation_status: "auto_ended",
+          consultation_ended_at: endedAt,
+          consultation_end_reason: "inactivity",
+          consultation_billable_seconds: billableSeconds,
+        },
+      },
+      { new: true }
+    );
+
+    return await Chat.findById(chat._id);
+  }
   // Create or get existing chat
   static async createChat(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
@@ -95,8 +168,8 @@ class ChatController {
           { lawyer_id: lawyerId, client_id: clientId },
           { lawyer_id: clientId, client_id: lawyerId }
         ]
-      }).populate('lawyer_id', 'first_name last_name email avatar')
-        .populate('client_id', 'first_name last_name email avatar')
+      }).populate('lawyer_id', 'first_name last_name email profile_image')
+        .populate('client_id', 'first_name last_name email profile_image')
         .populate('lastMessage');
 
       if (existingChat) {
@@ -130,8 +203,8 @@ class ChatController {
       });
 
       await newChat.save();
-      await newChat.populate('lawyer_id', 'first_name last_name email avatar charges');
-      await newChat.populate('client_id', 'first_name last_name email avatar');
+      await newChat.populate('lawyer_id', 'first_name last_name email profile_image charges');
+      await newChat.populate('client_id', 'first_name last_name email profile_image');
 
       // If client initiated and lawyer has charges, deduct tokens
       if (currentUser.account_type === 'client') {
@@ -259,7 +332,7 @@ class ChatController {
         .sort({ createdAt: 1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .populate('senderId', 'first_name last_name email avatar');
+        .populate('senderId', 'first_name last_name email profile_image');
 
       // Mark messages as read by this user
       await Message.updateMany(
@@ -323,11 +396,26 @@ class ChatController {
       }
 
       // Verify user is participant in the chat
-      const chat = await Chat.findById(chatId);
-      if (!chat || (chat.lawyer_id.toString() !== userId && chat.client_id.toString() !== userId)) {
+      let chat = await ChatController.getChatForParticipant(chatId, userId);
+      if (!chat) {
         res.status(403).json({
           success: false,
           message: 'Access denied to this chat'
+        });
+        return;
+      }
+
+      chat = await ChatController.autoEndIfInactive(chat);
+      if (!chat) {
+        res.status(404).json({ success: false, message: "Chat not found" });
+        return;
+      }
+
+      if (chat.consultation_status !== "active") {
+        res.status(409).json({
+          success: false,
+          message: "Consultation is not active. Start consultation before sending messages.",
+          data: ChatController.buildConsultationStatus(chat, userId),
         });
         return;
       }
@@ -344,12 +432,13 @@ class ChatController {
       });
 
       await newMessage.save();
-      await newMessage.populate('senderId', 'first_name last_name email avatar');
+      await newMessage.populate('senderId', 'first_name last_name email profile_image');
 
       // Update chat's last message
       await Chat.findByIdAndUpdate(chatId, {
         lastMessage: newMessage._id,
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        consultation_last_activity_at: new Date(),
       });
 
       // Send notification to the other participant (not the sender)
@@ -405,8 +494,8 @@ class ChatController {
           { client_id: userId }
         ]
       })
-        .populate('lawyer_id', 'first_name last_name email avatar')
-        .populate('client_id', 'first_name last_name email avatar')
+        .populate('lawyer_id', 'first_name last_name email profile_image')
+        .populate('client_id', 'first_name last_name email profile_image')
         .populate('lastMessage')
         .sort({ updatedAt: -1 });
 
@@ -488,6 +577,174 @@ class ChatController {
         success: false,
         message: 'Internal server error'
       });
+    }
+  }
+
+  static async getConsultationStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { chatId } = req.params;
+      const userId = req.user?.userId;
+      if (!userId) {
+        res.status(401).json({ success: false, message: "Unauthorized" });
+        return;
+      }
+
+      let chat = await ChatController.getChatForParticipant(chatId, userId);
+      if (!chat) {
+        res.status(404).json({ success: false, message: "Chat not found or access denied" });
+        return;
+      }
+
+      chat = await ChatController.autoEndIfInactive(chat);
+      res.status(200).json({
+        success: true,
+        data: ChatController.buildConsultationStatus(chat, userId),
+      });
+    } catch (error: any) {
+      console.error("Error getting consultation status:", error);
+      res.status(500).json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  static async startConsultation(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { chatId } = req.params;
+      const userId = req.user?.userId;
+      if (!userId) {
+        res.status(401).json({ success: false, message: "Unauthorized" });
+        return;
+      }
+
+      let chat = await ChatController.getChatForParticipant(chatId, userId);
+      if (!chat) {
+        res.status(404).json({ success: false, message: "Chat not found or access denied" });
+        return;
+      }
+
+      chat = await ChatController.autoEndIfInactive(chat);
+      if (!chat) {
+        res.status(404).json({ success: false, message: "Chat not found" });
+        return;
+      }
+
+      if (chat.consultation_status === "ended" || chat.consultation_status === "auto_ended") {
+        res.status(409).json({ success: false, message: "Consultation already ended", data: ChatController.buildConsultationStatus(chat, userId) });
+        return;
+      }
+
+      const me = new mongoose.Types.ObjectId(userId);
+      await Chat.findByIdAndUpdate(chat._id, {
+        $addToSet: { consultation_started_by: me },
+      });
+
+      let updated = await Chat.findById(chat._id);
+      const distinctStarters = new Set(
+        (updated?.consultation_started_by || []).map((id: any) => id.toString())
+      );
+      if (updated && distinctStarters.size >= 2) {
+        updated = await Chat.findByIdAndUpdate(
+          chat._id,
+          {
+            $set: {
+              consultation_status: "active",
+              consultation_started_at: updated.consultation_started_at || new Date(),
+              consultation_last_activity_at: new Date(),
+            },
+          },
+          { new: true }
+        );
+      } else if (updated && updated.consultation_status !== "active") {
+        updated = await Chat.findByIdAndUpdate(
+          chat._id,
+          { $set: { consultation_status: "pending" } },
+          { new: true }
+        );
+      }
+
+      res.status(200).json({ success: true, data: ChatController.buildConsultationStatus(updated, userId) });
+    } catch (error: any) {
+      console.error("Error starting consultation:", error);
+      res.status(500).json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  static async endConsultation(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { chatId } = req.params;
+      const { reason = "manual" } = req.body || {};
+      const userId = req.user?.userId;
+      if (!userId) {
+        res.status(401).json({ success: false, message: "Unauthorized" });
+        return;
+      }
+
+      let chat = await ChatController.getChatForParticipant(chatId, userId);
+      if (!chat) {
+        res.status(404).json({ success: false, message: "Chat not found or access denied" });
+        return;
+      }
+
+      chat = await ChatController.autoEndIfInactive(chat);
+      if (!chat) {
+        res.status(404).json({ success: false, message: "Chat not found" });
+        return;
+      }
+
+      if (chat.consultation_status === "ended" || chat.consultation_status === "auto_ended") {
+        res.status(200).json({ success: true, data: ChatController.buildConsultationStatus(chat, userId) });
+        return;
+      }
+
+      if (reason === "inactivity") {
+        const base = chat.consultation_last_activity_at ? new Date(chat.consultation_last_activity_at) : new Date();
+        const endedAt = new Date(base.getTime() + ChatController.INACTIVITY_MS);
+        const billableSeconds = chat.consultation_started_at
+          ? ChatController.computeInactiveBillableSeconds(new Date(chat.consultation_started_at), endedAt)
+          : 0;
+
+        const updated = await Chat.findOneAndUpdate(
+          { _id: chat._id, consultation_status: { $in: ["active", "pending"] } },
+          {
+            $set: {
+              consultation_status: "auto_ended",
+              consultation_ended_at: endedAt,
+              consultation_end_reason: "inactivity",
+              consultation_billable_seconds: billableSeconds,
+            },
+          },
+          { new: true }
+        );
+
+        res.status(200).json({ success: true, data: ChatController.buildConsultationStatus(updated, userId) });
+        return;
+      }
+
+      const me = new mongoose.Types.ObjectId(userId);
+      const alreadyOtherEnded = (chat.consultation_ended_by || []).some((id: any) => id.toString() !== userId);
+      const endedAt = new Date();
+      const billableSeconds = chat.consultation_started_at
+        ? Math.max(0, Math.floor((endedAt.getTime() - new Date(chat.consultation_started_at).getTime()) / 1000))
+        : 0;
+
+      await Chat.findByIdAndUpdate(chat._id, {
+        $addToSet: { consultation_ended_by: me },
+        ...(alreadyOtherEnded
+          ? {
+              $set: {
+                consultation_status: "ended",
+                consultation_ended_at: endedAt,
+                consultation_end_reason: "manual",
+                consultation_billable_seconds: billableSeconds,
+              },
+            }
+          : {}),
+      });
+
+      const updated = await Chat.findById(chat._id);
+      res.status(200).json({ success: true, data: ChatController.buildConsultationStatus(updated, userId) });
+    } catch (error: any) {
+      console.error("Error ending consultation:", error);
+      res.status(500).json({ success: false, message: "Internal server error" });
     }
   }
 }

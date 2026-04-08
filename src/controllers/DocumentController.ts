@@ -16,6 +16,41 @@ export default class DocumentController {
     const base = extra ? ` ${JSON.stringify(extra)}` : "";
     console.log(`[perf] ${label} ${elapsedMs}ms${base}`);
   }
+
+  private static getSyncLocationLabel(storageType?: string | null): string {
+    if (storageType === StorageType.APP) return "PC";
+    if (storageType === StorageType.CLOUD) return "Cloud";
+    if (storageType === StorageType.APP_CLOUD) return "PC + Cloud";
+    return "Unknown";
+  }
+
+  private static logStorageAudit(params: {
+    action: string;
+    user_id: string;
+    document_id: string;
+    before_type?: string | null;
+    after_type?: string | null;
+    note?: string;
+  }) {
+    console.log("[audit] document-storage-transition", {
+      action: params.action,
+      user_id: params.user_id,
+      document_id: params.document_id,
+      before_type: params.before_type ?? null,
+      after_type: params.after_type ?? null,
+      note: params.note ?? null,
+      at: new Date().toISOString(),
+    });
+  }
+
+  private static isStorageMutationAuthorized(doc: any, userId?: string): boolean {
+    if (!userId || !doc) return false;
+    const isOwner = doc.uploaded_by?.toString?.() === userId;
+    const isExplicitParticipant = Array.isArray(doc.shared_with)
+      ? doc.shared_with.some((u: any) => u?.toString?.() === userId)
+      : false;
+    return isOwner || isExplicitParticipant;
+  }
   /**
    * Enhanced upload supporting PDF, Image, and Video files with AI processing
    * @param req.body.file (base64 string)
@@ -363,9 +398,20 @@ export default class DocumentController {
       ]);
       DocumentController.logPerf("document.list", t0, { page, limit, returned: documents.length, total });
 
+      const normalizedDocuments = documents.map((doc: any) => ({
+        _id: doc?._id,
+        document_name: doc?.document_name ?? null,
+        storage_type: doc?.storage_type ?? null,
+        storage_location: doc?.storage_location ?? null,
+        link: doc?.link ?? null,
+        created_at: doc?.createdAt ?? doc?.created_at ?? null,
+        updated_at: doc?.updatedAt ?? doc?.updated_at ?? null,
+        syncLocationLabel: DocumentController.getSyncLocationLabel(doc?.storage_type ?? null),
+      }));
+
       return res.status(200).json({
         success: true,
-        documents,
+        documents: normalizedDocuments,
         pagination: {
           currentPage: page,
           perPage: limit,
@@ -1443,11 +1489,20 @@ export default class DocumentController {
     try {
       const { id } = req.params;
       const { storage_type, link } = req.body;
+      const userId = (req as any).id;
 
       if (!['app', 'cloud', 'app_cloud'].includes(storage_type)) {
         return res.status(400).json({
           success: false,
           message: 'Invalid storage_type. Must be: app, cloud, or app_cloud'
+        });
+      }
+
+      const existing = await UserDocument.findById(id);
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
         });
       }
 
@@ -1460,12 +1515,13 @@ export default class DocumentController {
         { new: true }
       );
 
-      if (!document) {
-        return res.status(404).json({
-          success: false,
-          message: 'Document not found'
-        });
-      }
+      DocumentController.logStorageAudit({
+        action: "update_storage_type",
+        user_id: userId,
+        document_id: id,
+        before_type: existing.storage_type,
+        after_type: document?.storage_type,
+      });
 
       res.json({
         success: true,
@@ -1489,6 +1545,10 @@ export default class DocumentController {
   static async removeFromCloud(req: Request, res: Response) {
     try {
       const { id } = req.params;
+      const userId = (req as any).id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
       const document = await UserDocument.findById(id);
 
@@ -1498,20 +1558,76 @@ export default class DocumentController {
           message: 'Document not found'
         });
       }
-
-      // If it's app_cloud, downgrade to app; if it's cloud-only, downgrade to app
-      let newStorageType: string = 'app';
-      if (document.storage_type === 'app_cloud') {
-        newStorageType = 'app';
+      if (!DocumentController.isStorageMutationAuthorized(document, userId)) {
+        DocumentController.logStorageAudit({
+          action: "delete_cloud",
+          user_id: userId,
+          document_id: id,
+          before_type: document.storage_type,
+          after_type: document.storage_type,
+          note: "forbidden",
+        });
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden"
+        });
       }
 
-      document.storage_type = newStorageType as StorageType;
-      await document.save();
+      const beforeType = document.storage_type;
+
+      // Idempotent cloud delete semantics:
+      // cloud -> remove DB record
+      // app_cloud -> remove cloud reference + downgrade to app
+      // app -> already no cloud copy; no-op
+      if (document.storage_type === StorageType.CLOUD) {
+        await UserDocument.findByIdAndDelete(id);
+        DocumentController.logStorageAudit({
+          action: "delete_cloud",
+          user_id: userId,
+          document_id: id,
+          before_type: beforeType,
+          after_type: null,
+          note: "cloud-only document deleted from DB after cloud delete",
+        });
+        return res.json({
+          success: true,
+          message: 'Cloud object removed and document deleted'
+        });
+      }
+
+      if (document.storage_type === StorageType.APP_CLOUD) {
+        document.storage_type = StorageType.APP;
+        document.link = undefined;
+        await document.save();
+        DocumentController.logStorageAudit({
+          action: "delete_cloud",
+          user_id: userId,
+          document_id: id,
+          before_type: beforeType,
+          after_type: document.storage_type,
+          note: "cloud deleted, retained local/app record",
+        });
+        return res.json({
+          success: true,
+          document,
+          message: 'Cloud object removed; document now local only'
+        });
+      }
+
+      // APP: no cloud artifact to remove; keep idempotent success.
+      DocumentController.logStorageAudit({
+        action: "delete_cloud",
+        user_id: userId,
+        document_id: id,
+        before_type: beforeType,
+        after_type: beforeType,
+        note: "no-op; document already local-only",
+      });
 
       res.json({
         success: true,
         document,
-        message: 'Document removed from cloud'
+        message: 'No cloud copy found; document already local only'
       });
     } catch (error: any) {
       console.error('Error removing document from cloud:', error);
@@ -1549,6 +1665,222 @@ export default class DocumentController {
       res.status(500).json({
         success: false,
         message: error.message || 'Failed to sync documents'
+      });
+    }
+  }
+
+  /**
+   * Remove local copy lifecycle action
+   * DELETE /document/:id/local
+   */
+  static async removeFromLocal(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const userId = (req as any).id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      const document = await UserDocument.findById(id);
+
+      if (!document) {
+        return res.status(200).json({
+          success: true,
+          message: "Document already removed"
+        });
+      }
+      if (!DocumentController.isStorageMutationAuthorized(document, userId)) {
+        DocumentController.logStorageAudit({
+          action: "delete_local",
+          user_id: userId,
+          document_id: id,
+          before_type: document.storage_type,
+          after_type: document.storage_type,
+          note: "forbidden",
+        });
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden"
+        });
+      }
+
+      const beforeType = document.storage_type;
+
+      // app -> remove DB record
+      if (beforeType === StorageType.APP) {
+        await UserDocument.findByIdAndDelete(id);
+        DocumentController.logStorageAudit({
+          action: "delete_local",
+          user_id: userId,
+          document_id: id,
+          before_type: beforeType,
+          after_type: null,
+          note: "local-only record removed from DB",
+        });
+        return res.status(200).json({
+          success: true,
+          message: "Local file deleted and document removed"
+        });
+      }
+
+      // app_cloud -> retain cloud record
+      if (beforeType === StorageType.APP_CLOUD) {
+        document.storage_type = StorageType.CLOUD;
+        await document.save();
+        DocumentController.logStorageAudit({
+          action: "delete_local",
+          user_id: userId,
+          document_id: id,
+          before_type: beforeType,
+          after_type: document.storage_type,
+          note: "local removed, retained cloud",
+        });
+        return res.status(200).json({
+          success: true,
+          document,
+          message: "Local file deleted; document retained in cloud"
+        });
+      }
+
+      // cloud -> no local artifact, idempotent no-op
+      DocumentController.logStorageAudit({
+        action: "delete_local",
+        user_id: userId,
+        document_id: id,
+        before_type: beforeType,
+        after_type: beforeType,
+        note: "no-op; document already cloud-only",
+      });
+      return res.status(200).json({
+        success: true,
+        document,
+        message: "No local copy found; document already cloud only"
+      });
+    } catch (error: any) {
+      console.error("Error removing document from local storage:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to remove local document"
+      });
+    }
+  }
+
+  /**
+   * Sync local existence state sent by desktop/agent
+   * POST /document/sync-local-state
+   * Body: { items: [{ document_id, local_exists }] }
+   */
+  static async syncLocalState(req: Request, res: Response) {
+    try {
+      const userId = (req as any).id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      const results: any[] = [];
+
+      for (const item of items) {
+        const documentId = item?.document_id;
+        const localExists = Boolean(item?.local_exists);
+        if (!documentId || !mongoose.Types.ObjectId.isValid(documentId)) {
+          results.push({
+            document_id: documentId,
+            success: false,
+            status: "not_found",
+            message: "Invalid document_id",
+          });
+          continue;
+        }
+
+        const doc = await UserDocument.findById(documentId);
+        if (!doc) {
+          results.push({
+            document_id: documentId,
+            success: false,
+            status: "not_found",
+            message: "Document not found",
+          });
+          continue;
+        }
+        if (!DocumentController.isStorageMutationAuthorized(doc, userId)) {
+          DocumentController.logStorageAudit({
+            action: "sync_local_missing",
+            user_id: userId,
+            document_id: documentId,
+            before_type: doc.storage_type,
+            after_type: doc.storage_type,
+            note: "forbidden",
+          });
+          results.push({
+            document_id: documentId,
+            success: false,
+            status: "forbidden",
+            message: "Forbidden",
+          });
+          continue;
+        }
+
+        if (localExists) {
+          results.push({
+            document_id: documentId,
+            success: true,
+            status: "noop",
+            message: "Local file exists; no update required",
+          });
+          continue;
+        }
+
+        const beforeType = doc.storage_type;
+        if (beforeType === StorageType.APP) {
+          await UserDocument.findByIdAndDelete(documentId);
+          DocumentController.logStorageAudit({
+            action: "sync_local_missing",
+            user_id: userId,
+            document_id: documentId,
+            before_type: beforeType,
+            after_type: null,
+          });
+          results.push({
+            document_id: documentId,
+            success: true,
+            status: "deleted",
+            message: "Local-only record removed",
+          });
+        } else if (beforeType === StorageType.APP_CLOUD) {
+          doc.storage_type = StorageType.CLOUD;
+          await doc.save();
+          DocumentController.logStorageAudit({
+            action: "sync_local_missing",
+            user_id: userId,
+            document_id: documentId,
+            before_type: beforeType,
+            after_type: doc.storage_type,
+          });
+          results.push({
+            document_id: documentId,
+            success: true,
+            status: "updated",
+            message: "Local missing; storage_type changed to cloud",
+          });
+        } else {
+          results.push({
+            document_id: documentId,
+            success: true,
+            status: "noop",
+            message: "Already cloud-only",
+          });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        processed: results.length,
+        results
+      });
+    } catch (error: any) {
+      console.error("Error syncing local state:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to sync local state"
       });
     }
   }

@@ -89,6 +89,46 @@ class UserController {
     }
   }
 
+  static async updateProfileImage(req: Request, res: Response) {
+    try {
+      const { user_id, profile_image, avatar } = req.body;
+      const userId = user_id || (req as any).user?.userId || (req as any).user?._id || (req as any).id;
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required"
+        });
+      }
+
+      const imageUrl = profile_image || avatar;
+      if (!imageUrl) {
+        return res.status(400).json({
+          success: false,
+          message: "Profile image URL is required"
+        });
+      }
+
+      const updatedUser = await UserService.updateUser(userId, { profile_image: imageUrl });
+      
+      if (!updatedUser.success) {
+        return res.status(404).json(updatedUser);
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Profile image updated successfully",
+        data: updatedUser.data
+      });
+    } catch (error) {
+      console.error("Error updating profile image:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to update profile image"
+      });
+    }
+  }
+
   static async getPresignedUrl(req: Request, res: Response) {
     try {
       const requestData = req.body;

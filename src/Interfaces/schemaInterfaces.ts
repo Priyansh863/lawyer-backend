@@ -16,6 +16,7 @@ export interface IUserSchema {
   account_type?: string;
   first_name: string;
   last_name?: string;
+  name?: string;
   about: string;
   user_name: string;
   email?: string;

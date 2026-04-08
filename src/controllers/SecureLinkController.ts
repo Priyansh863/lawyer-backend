@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import SecureLink from '../models/SecureLink';
+import SecureLinkUpload from '../models/SecureLinkUpload';
 import { User } from '../models/user';
 import UserDocument from '../models/user_documents';
 import { compressBase64 } from '../utils/documentUtils';
+import jwt from 'jsonwebtoken';
 
 // Define AuthenticatedRequest interface
 interface AuthenticatedRequest extends Request {
@@ -14,6 +16,13 @@ interface AuthenticatedRequest extends Request {
 }
 
 class SecureLinkController {
+  private static isExpired(expiresAt: Date): boolean {
+    return new Date() >= new Date(expiresAt);
+  }
+
+  private static getStatus(expiresAt: Date): "active" | "expired" {
+    return SecureLinkController.isExpired(expiresAt) ? "expired" : "active";
+  }
   /**
    * Generate a secure upload link for a client
    * POST /api/v1/secure-link/generate
@@ -73,7 +82,6 @@ class SecureLinkController {
       const existingLink = await SecureLink.findOne({
         lawyer_id,
         client_id,
-        is_used: false,
         expires_at: { $gt: new Date() }
       });
 
@@ -140,7 +148,7 @@ class SecureLinkController {
       if (!secureLink) {
         res.status(404).json({
           success: false,
-          message: 'Invalid, expired, or already used link'
+          message: 'Invalid or expired link'
         });
         return;
       }
@@ -152,6 +160,7 @@ class SecureLinkController {
           link_id: secureLink._id,
           lawyer_name: `${(secureLink.lawyer_id as any).first_name} ${(secureLink.lawyer_id as any).last_name}`,
           client_name: `${(secureLink.client_id as any).first_name} ${(secureLink.client_id as any).last_name}`,
+          status: SecureLinkController.getStatus(secureLink.expires_at),
           expires_at: secureLink.expires_at,
           created_at: secureLink.created_at
         }
@@ -188,7 +197,7 @@ class SecureLinkController {
       if (!secureLink) {
         res.status(404).json({
           success: false,
-          message: 'Invalid, expired, or already used link'
+          message: 'Invalid or expired link'
         });
         return;
       }
@@ -199,18 +208,19 @@ class SecureLinkController {
       if (!isPasswordValid) {
         res.status(401).json({
           success: false,
-          message: 'Invalid password'
+          message: 'Incorrect password'
         });
         return;
       }
 
       // Generate temporary upload token (valid for 1 hour)
-      const uploadToken = require('jsonwebtoken').sign(
+      const uploadToken = jwt.sign(
         {
           link_id: secureLink._id,
           lawyer_id: secureLink.lawyer_id,
           client_id: secureLink.client_id,
-          type: 'secure_upload_auth'
+          type: 'secure_upload_auth',
+          expires_at: secureLink.expires_at
         },
         process.env.JWT_SECRET || 'your-secret-key',
         { expiresIn: '1h' }
@@ -254,7 +264,6 @@ class SecureLinkController {
       }
 
       // Verify upload token
-      const jwt = require('jsonwebtoken');
       let decoded: any;
       try {
         decoded = jwt.verify(upload_token, process.env.JWT_SECRET || 'your-secret-key');
@@ -276,10 +285,19 @@ class SecureLinkController {
 
       // Get the secure link
       const secureLink = await SecureLink.findById(decoded.link_id);
-      if (!secureLink || secureLink.is_used) {
+      if (!secureLink) {
         res.status(404).json({
           success: false,
-          message: 'Link not found or already used'
+          message: 'Link not found'
+        });
+        return;
+      }
+
+      // Enforce expiry on every upload. Link remains active for multiple uploads until expiry.
+      if (SecureLinkController.isExpired(secureLink.expires_at)) {
+        res.status(410).json({
+          success: false,
+          message: 'Secure link has expired'
         });
         return;
       }
@@ -300,18 +318,39 @@ class SecureLinkController {
 
       const savedDocument = await document.save();
 
-      // Mark secure link as used
-      await secureLink.markAsUsed(savedDocument._id);
+      // Persist upload event (one-to-many: secure_link -> uploads)
+      const upload = await SecureLinkUpload.create({
+        link_id: secureLink._id,
+        document_id: savedDocument._id,
+        file_url,
+        file_name,
+        file_size: file_size || 0,
+      });
+
+      // Keep backward compatibility field updated, but do not use it to block uploads.
+      if (!secureLink.is_used) {
+        secureLink.is_used = true;
+      }
+      secureLink.used_at = new Date();
+      secureLink.uploaded_document_id = savedDocument._id;
+      await secureLink.save();
+
+      const uploadCount = await SecureLinkUpload.countDocuments({ link_id: secureLink._id });
+      console.log("[audit] secure-link upload", {
+        link_id: secureLink._id.toString(),
+        upload_id: upload._id.toString(),
+        client_id: decoded.client_id,
+        lawyer_id: decoded.lawyer_id,
+        uploaded_at: upload.uploaded_at,
+      });
 
       res.status(201).json({
         success: true,
-        message: 'Document uploaded successfully through secure link',
         data: {
-          document_id: savedDocument._id,
-          document_name: savedDocument.document_name,
-          upload_date: savedDocument.created_at || new Date(),
-          shared_with_lawyer: true,
-          link_expired: true
+          link_id: secureLink._id,
+          upload_id: upload._id,
+          upload_count: uploadCount,
+          expires_at: secureLink.expires_at
         }
       });
 
@@ -346,12 +385,8 @@ class SecureLinkController {
       let query: any = { lawyer_id };
       
       if (status === 'active') {
-        query.is_used = false;
         query.expires_at = { $gt: new Date() };
-      } else if (status === 'used') {
-        query.is_used = true;
       } else if (status === 'expired') {
-        query.is_used = false;
         query.expires_at = { $lte: new Date() };
       }
 
@@ -360,12 +395,26 @@ class SecureLinkController {
       const [links, total] = await Promise.all([
         SecureLink.find(query)
           .populate('client_id', 'first_name last_name email')
-          .populate('uploaded_document_id', 'file_name upload_date')
           .sort({ created_at: -1 })
           .skip(skip)
           .limit(Number(limit)),
         SecureLink.countDocuments(query)
       ]);
+
+      const linkIds = links.map((link: any) => link._id);
+      const uploadAgg = await SecureLinkUpload.aggregate([
+        { $match: { link_id: { $in: linkIds } } },
+        {
+          $group: {
+            _id: "$link_id",
+            upload_count: { $sum: 1 },
+            latest_upload_at: { $max: "$uploaded_at" },
+          }
+        }
+      ]);
+      const uploadMap = new Map(
+        uploadAgg.map((row: any) => [row._id.toString(), row])
+      );
 
       res.status(200).json({
         success: true,
@@ -376,14 +425,14 @@ class SecureLinkController {
             client_name: `${(link.client_id as any).first_name} ${(link.client_id as any).last_name}`,
             client_email: (link.client_id as any).email,
             secure_url: link.generateSecureUrl(),
-            is_used: link.is_used,
             created_at: link.created_at,
             expires_at: link.expires_at,
+            status: SecureLinkController.getStatus(link.expires_at),
+            upload_count: uploadMap.get((link as any)._id.toString())?.upload_count || 0,
+            latest_upload_at: uploadMap.get((link as any)._id.toString())?.latest_upload_at || null,
+            // Backward compatible fields
+            is_used: link.is_used,
             used_at: link.used_at,
-            uploaded_document: link.uploaded_document_id ? {
-              file_name: (link.uploaded_document_id as any).file_name,
-              upload_date: (link.uploaded_document_id as any).upload_date
-            } : null
           })),
           pagination: {
             current_page: Number(page),

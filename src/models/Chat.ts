@@ -4,6 +4,14 @@ export interface IChat extends Document {
   lawyer_id: mongoose.Types.ObjectId;
   client_id: mongoose.Types.ObjectId;
   lastMessage?: mongoose.Types.ObjectId;
+  consultation_status: 'pending' | 'active' | 'ended' | 'auto_ended';
+  consultation_started_by: mongoose.Types.ObjectId[];
+  consultation_ended_by: mongoose.Types.ObjectId[];
+  consultation_started_at?: Date | null;
+  consultation_ended_at?: Date | null;
+  consultation_last_activity_at?: Date | null;
+  consultation_billable_seconds: number;
+  consultation_end_reason?: 'manual' | 'inactivity' | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,6 +31,41 @@ const ChatSchema: Schema = new Schema({
     type: Schema.Types.ObjectId,
     ref: 'Message',
     default: null
+  },
+  consultation_status: {
+    type: String,
+    enum: ['pending', 'active', 'ended', 'auto_ended'],
+    default: 'pending',
+    index: true
+  },
+  consultation_started_by: [{
+    type: Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  consultation_ended_by: [{
+    type: Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  consultation_started_at: {
+    type: Date,
+    default: null
+  },
+  consultation_ended_at: {
+    type: Date,
+    default: null
+  },
+  consultation_last_activity_at: {
+    type: Date,
+    default: null
+  },
+  consultation_billable_seconds: {
+    type: Number,
+    default: 0
+  },
+  consultation_end_reason: {
+    type: String,
+    enum: ['manual', 'inactivity', null],
+    default: null
   }
 }, {
   timestamps: true
@@ -33,6 +76,7 @@ ChatSchema.index({ lawyer_id: 1, client_id: 1 }, { unique: true });
 ChatSchema.index({ lawyer_id: 1 });
 ChatSchema.index({ client_id: 1 });
 ChatSchema.index({ updatedAt: -1 });
+ChatSchema.index({ consultation_status: 1, consultation_last_activity_at: 1 });
 
 // Update the updated_at field before saving
 ChatSchema.pre('save', function(next) {

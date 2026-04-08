@@ -159,6 +159,11 @@ const UserSchema = new mongoose.Schema(
 );
 
 
+// name virtual to return the concatenated first and last name
+UserSchema.virtual('name').get(function() {
+  return `${this.first_name || ''} ${this.last_name || ''}`.trim();
+});
+
 UserSchema.set('toObject', { virtuals: true });
 UserSchema.set('toJSON', { virtuals: true });
 

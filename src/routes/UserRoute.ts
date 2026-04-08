@@ -13,6 +13,9 @@ userRoute.post("/create", UserController.createUser);
 // Route to update user details
 userRoute.put("/update/:id", UserController.updateUser);
 
+// Route to update profile image
+userRoute.post("/update-profile-image", UserController.updateProfileImage);
+
 // Route for generating presigned URLs
 userRoute.post(
   "/get-presigned-url",
