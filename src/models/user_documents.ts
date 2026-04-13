@@ -32,6 +32,7 @@ export interface IUserDocument extends Document {
   uploaded_by: mongoose.Types.ObjectId;
   upload_date: Date;
   summary: string;
+  summary_generated_at?: Date;
   status: DocumentStatus;
   link?: string;
   file_base64?: string;
@@ -53,6 +54,7 @@ const UserDocumentSchema: Schema = new Schema(
   {
     document_name: { type: String, required: true },
     summary: { type: String, required: false },
+    summary_generated_at: { type: Date, required: false },
     status: {
       type: String,
       enum: Object.values(DocumentStatus),

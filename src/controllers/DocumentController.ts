@@ -127,7 +127,7 @@ export default class DocumentController {
       // Prepare document data
       const documentData: any = {
         document_name: document_name,
-        status: "Completed",
+        status: process_with_ai ? DocumentStatus.PENDING : DocumentStatus.COMPLETED,
         uploaded_by: user_id,
         link: linkForDb,
         file_base64: processedBase64,
@@ -136,7 +136,8 @@ export default class DocumentController {
         privacy: privacy || 'public',
         file_size: file_size,
         storage_type: storage_type || 'cloud',
-        storage_location: storage_location || null
+        storage_location: storage_location || null,
+        summary: process_with_ai ? "" : undefined
       };
 
       // Only add case_id if privacy is private and case_id is provided
@@ -150,7 +151,7 @@ export default class DocumentController {
       if (associated_user_id) {
         const documentData: any = {
           document_name: document_name,
-          status: "Pending",
+          status: process_with_ai ? DocumentStatus.PENDING : DocumentStatus.COMPLETED,
           uploaded_by: associated_user_id,
           link: linkForDb,
           file_base64: processedBase64,
@@ -159,7 +160,8 @@ export default class DocumentController {
           privacy: privacy || 'public',
           file_size: file_size,
           storage_type: storage_type || 'cloud',
-          storage_location: storage_location || null
+          storage_location: storage_location || null,
+          summary: process_with_ai ? "" : undefined
         };
         await UserDocument.create(documentData);
       }
@@ -168,49 +170,46 @@ export default class DocumentController {
 
       console.log(`Processing ${fileTypeDisplay} document: ${doc._id}`);
 
-      // Process document with AI service if requested
+      // Process document with AI service asynchronously if requested
       if (process_with_ai && document_name) {
-        try {
-          const aiResult = await AIService.processDocument(doc._id.toString());
+        AIService.processDocument(doc._id.toString())
+          .then(async (aiResult: any) => {
+            if (aiResult?.success) {
+              await UserDocument.findByIdAndUpdate(doc._id, {
+                status: DocumentStatus.COMPLETED,
+                summary: aiResult.summary || '',
+                summary_generated_at: new Date()
+              } as any);
 
-          // Send notification for document upload if public (after AI processing)
-          try {
-            console.log('privacyprivacyprivacyprivacy', privacy)
-            if (privacy === DocumentPrivacy.PUBLIC) {
-              console.log('Sending document upload notification for public document');
-              await NotificationService.notifyDocumentUploaded(doc, user_id);
+              // Send notification for document upload if public (after AI processing)
+              try {
+                if (privacy === DocumentPrivacy.PUBLIC) {
+                  await NotificationService.notifyDocumentUploaded(doc, user_id);
+                }
+              } catch (notificationError) {
+                console.error('Failed to send document upload notification:', notificationError);
+              }
+            } else {
+              await UserDocument.findByIdAndUpdate(doc._id, {
+                status: DocumentStatus.FAILED,
+                summary: ''
+              } as any);
             }
-          } catch (notificationError) {
-            console.error('Failed to send document upload notification:', notificationError);
-          }
-
-          if (aiResult.success) {
-            // Fetch updated document with summary
-            const updatedDoc = await UserDocument.findById(doc._id);
-
-            return res.status(200).json({
-              success: true,
-              message: `${fileTypeDisplay} processed successfully`,
-              document: updatedDoc,
-              summary: aiResult.summary
-            });
-          } else {
-            return res.status(200).json({
-              success: true,
-              message: `${fileTypeDisplay} uploaded but AI processing failed`,
-              document: doc,
-              aiError: aiResult.message
-            });
-          }
-        } catch (aiError: any) {
-          console.error('AI processing error:', aiError);
-          return res.status(200).json({
-            success: true,
-            message: `${fileTypeDisplay} uploaded but AI processing failed`,
-            document: doc,
-            aiError: aiError.message
+          })
+          .catch(async (aiError: any) => {
+            console.error('AI processing error:', aiError);
+            await UserDocument.findByIdAndUpdate(doc._id, {
+              status: DocumentStatus.FAILED,
+              summary: ''
+            } as any);
           });
-        }
+
+        return res.status(200).json({
+          success: true,
+          message: `${fileTypeDisplay} uploaded successfully. AI processing started in background.`,
+          process_with_ai: true,
+          document: doc
+        });
       } else {
         // Send notification for document upload if public
         try {
@@ -401,6 +400,8 @@ export default class DocumentController {
       const normalizedDocuments = documents.map((doc: any) => ({
         _id: doc?._id,
         document_name: doc?.document_name ?? null,
+        status: doc?.status ?? null,
+        summary: doc?.summary ?? doc?.ai_summary ?? null,
         storage_type: doc?.storage_type ?? null,
         storage_location: doc?.storage_location ?? null,
         link: doc?.link ?? null,
