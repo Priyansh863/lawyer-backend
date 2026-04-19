@@ -24,6 +24,46 @@ interface CreateQuestionInput {
 }
 
 class QuestionService {
+  private readonly qaUserPopulate =
+    'first_name last_name email account_type profile_image avatar';
+
+  private normalizeQaUser(u: any): any {
+    if (u == null) return u;
+    const o = u && typeof u.toObject === 'function' ? u.toObject() : { ...u };
+    const img = o.profile_image || o.avatar || null;
+    return { ...o, profile_image: img, avatar: img };
+  }
+
+  /** Populate client, last answerer, and each answer's lawyer (for avatars in lists/detail). */
+  private chainQuestionUserPopulates(q: any) {
+    return q
+      .populate('clientId', this.qaUserPopulate)
+      .populate('answeredBy', this.qaUserPopulate)
+      .populate({ path: 'answer.lawyer_id', select: this.qaUserPopulate });
+  }
+
+  /** Normalize populated `answer[].lawyer_id` User subdocs to include profile_image like posts. */
+  private enrichAnswerLawyers(questionObj: any) {
+    if (!Array.isArray(questionObj.answer)) return;
+    questionObj.answer = questionObj.answer.map((ans: any) => ({
+      ...ans,
+      lawyer_id:
+        ans.lawyer_id &&
+        typeof ans.lawyer_id === 'object' &&
+        (ans.lawyer_id._id || (ans.lawyer_id as any).id)
+          ? this.normalizeQaUser(ans.lawyer_id)
+          : ans.lawyer_id,
+    }));
+  }
+
+  /** Apply same author shape as Post API: profile_image + avatar on client, answeredBy, and each answer lawyer. */
+  private finalizeQuestionPayload(questionObj: any) {
+    questionObj.clientId = this.normalizeQaUser(questionObj.clientId);
+    questionObj.answeredBy = this.normalizeQaUser(questionObj.answeredBy);
+    this.enrichAnswerLawyers(questionObj);
+    return questionObj;
+  }
+
   // Helper to mask identity (fag2*** style)
   private maskName(name: string): string {
     if (!name) return "Anonymous";
@@ -53,7 +93,11 @@ class QuestionService {
         console.error('Failed to send Q&A question notification:', notificationError);
       }
 
-      return newQuestion;
+      const populated = await this.chainQuestionUserPopulates(Question.findById(newQuestion._id));
+      if (!populated) return newQuestion;
+      const qo = populated.toObject();
+      this.finalizeQuestionPayload(qo);
+      return qo;
     } catch (error) {
       console.error("QuestionService createQuestion error:", error);
       throw error;
@@ -160,10 +204,8 @@ class QuestionService {
       // Calculate pagination
       const skip = (page - 1) * limit;
 
-      // Get questions with populated client data
-      const rawQuestions = await Question.find(filterQuery)
-        .populate('clientId', 'first_name last_name email account_type')
-        .populate('answeredBy', 'first_name last_name email account_type')
+      // Get questions with populated client / lawyer / per-answer lawyer (profile_image)
+      const rawQuestions = await this.chainQuestionUserPopulates(Question.find(filterQuery))
         .sort({ createdAt: -1 }) // newest first
         .skip(skip)
         .limit(limit);
@@ -197,6 +239,8 @@ class QuestionService {
           });
         }
 
+        this.finalizeQuestionPayload(questionObj);
+
         if (questionObj.isAnonymous) {
           questionObj.clientDisplayName = this.maskName(questionObj.clientName || "User");
         } else {
@@ -228,12 +272,16 @@ class QuestionService {
   async getQuestionById(questionId: string, userId?: string) {
     try {
       // Find question by ID and populate user details
-      const question = await Question.findById(questionId)
-        .populate('clientId', 'first_name last_name email account_type')
-        .populate('answeredBy', 'first_name last_name email account_type');
+      const question = await this.chainQuestionUserPopulates(Question.findById(questionId));
+
+      const toNormalized = (q: any) => {
+        const questionObj = q.toObject ? q.toObject() : { ...q };
+        this.finalizeQuestionPayload(questionObj);
+        return questionObj;
+      };
 
       if (question && userId) {
-        const questionObj = question.toObject();
+        const questionObj = toNormalized(question);
         const bookmark = await Bookmark.findOne({
           userId: new mongoose.Types.ObjectId(userId.toString()),
           questionId: new mongoose.Types.ObjectId(questionId)
@@ -242,7 +290,7 @@ class QuestionService {
         return questionObj;
       }
 
-      return question;
+      return question ? toNormalized(question) : null;
     } catch (error) {
       console.error("QuestionService getQuestionById error:", error);
       throw error;
@@ -294,12 +342,9 @@ class QuestionService {
         }
       };
 
-      const updatedQuestion = await Question.findByIdAndUpdate(
-        questionId,
-        updateData,
-        { new: true, runValidators: false }
-      ).populate('clientId', 'first_name last_name email account_type')
-       .populate('answeredBy', 'first_name last_name email account_type');
+      const updatedQuestion = await this.chainQuestionUserPopulates(
+        Question.findByIdAndUpdate(questionId, updateData, { new: true, runValidators: false })
+      );
 
       if (!updatedQuestion) {
         console.error(`[Q&A] Question not found after findByIdAndUpdate: ${questionId}`);
@@ -320,7 +365,9 @@ class QuestionService {
         console.error('Failed to send Q&A answer notification:', notificationError);
       }
 
-      return updatedQuestion;
+      const uo = updatedQuestion.toObject();
+      this.finalizeQuestionPayload(uo);
+      return uo;
     } catch (error) {
       console.error("QuestionService submitAnswer error:", error);
       throw error;
@@ -369,10 +416,11 @@ class QuestionService {
       // Save the updated question
       await question.save();
 
-      // Return the updated question with populated fields
-      return await Question.findById(questionId)
-        .populate('clientId', 'first_name last_name email account_type')
-        .populate('answeredBy', 'first_name last_name email account_type');
+      const q = await this.chainQuestionUserPopulates(Question.findById(questionId));
+      if (!q) return null;
+      const qo = q.toObject();
+      this.finalizeQuestionPayload(qo);
+      return qo;
     } catch (error) {
       console.error("QuestionService editAnswer error:", error);
       throw error;
@@ -443,9 +491,11 @@ class QuestionService {
       await question.save();
 
       // Return the updated question with populated fields
-      return await Question.findById(questionId)
-        .populate('clientId', 'first_name last_name email account_type')
-        .populate('answeredBy', 'first_name last_name email account_type');
+      const q = await this.chainQuestionUserPopulates(Question.findById(questionId));
+      if (!q) return null;
+      const qo = q.toObject();
+      this.finalizeQuestionPayload(qo);
+      return qo;
     } catch (error) {
       console.error("QuestionService editAnswerById error:", error);
       throw error;
@@ -495,9 +545,11 @@ class QuestionService {
       await question.save();
 
       // Return the updated question with populated fields
-      return await Question.findById(questionId)
-        .populate('clientId', 'first_name last_name email account_type')
-        .populate('answeredBy', 'first_name last_name email account_type');
+      const q = await this.chainQuestionUserPopulates(Question.findById(questionId));
+      if (!q) return null;
+      const qo = q.toObject();
+      this.finalizeQuestionPayload(qo);
+      return qo;
     } catch (error) {
       console.error("QuestionService deleteAnswer error:", error);
       throw error;
@@ -516,14 +568,17 @@ class QuestionService {
       const lawyerName = `${lawyer.first_name} ${lawyer.last_name}`;
 
       // Find questions where this lawyer has provided an answer
-      const questions = await Question.find({
-        "answer.lawyer_id": new mongoose.Types.ObjectId(lawyerId)
-      })
-        .populate('clientId', 'first_name last_name email account_type')
-        .populate('answeredBy', 'first_name last_name email account_type')
-        .sort({ createdAt: -1 });
+      const questions = await this.chainQuestionUserPopulates(
+        Question.find({
+          "answer.lawyer_id": new mongoose.Types.ObjectId(lawyerId),
+        })
+      ).sort({ createdAt: -1 });
 
-      return questions;
+      return questions.map((q: any) => {
+        const o = q.toObject();
+        this.finalizeQuestionPayload(o);
+        return o;
+      });
     } catch (error) {
       console.error("QuestionService getQuestionsByLawyer error:", error);
       throw error;

@@ -44,8 +44,9 @@ class SocketService {
         const decoded = jwt.verify(token, envConfig.jwtSecretKey) as any;
         console.log("decoded", decoded);
         
-        socket.userId = decoded.userId;
-        socket.userRole = decoded.role;
+        // Support both legacy and current JWT shapes
+        socket.userId = decoded.userId || decoded._id;
+        socket.userRole = decoded.role || decoded.account_type;
         
         next();
       } catch (error) {
@@ -69,8 +70,13 @@ class SocketService {
       }
 
       // Handle joining chat rooms
-      socket.on('join_chat', async (chatId: string) => {
+      socket.on('join_chat', async (payload: any) => {
         try {
+          const chatId = typeof payload === 'string' ? payload : payload?.chatId;
+          if (!chatId || typeof chatId !== 'string') {
+            socket.emit('error', { message: 'Invalid chatId' });
+            return;
+          }
           // Verify user is part of this chat
           const chat = await ChatService.getChatById(chatId);
           if (chat && socket.userId && this.isUserInChat(socket.userId, chat)) {
@@ -83,7 +89,9 @@ class SocketService {
       });
 
       // Handle leaving chat rooms
-      socket.on('leave_chat', (chatId: string) => {
+      socket.on('leave_chat', (payload: any) => {
+        const chatId = typeof payload === 'string' ? payload : payload?.chatId;
+        if (!chatId || typeof chatId !== 'string') return;
         socket.leave(`chat_${chatId}`);
         console.log(`User ${socket.userId} left chat ${chatId}`);
       });
@@ -182,9 +190,13 @@ class SocketService {
   }
 
   private isUserInChat(userId: string, chat: any): boolean {
-    return chat.participants.some((participant: any) => 
-      participant.toString() === userId
-    );
+    if (Array.isArray(chat?.participants)) {
+      return chat.participants.some((participant: any) => participant?.toString?.() === userId);
+    }
+    // Fallback for Chat model variants that store lawyer/client directly
+    const lawyerId = chat?.lawyer_id?.toString?.();
+    const clientId = chat?.client_id?.toString?.();
+    return lawyerId === userId || clientId === userId;
   }
 
   // Method to send notification to specific user
@@ -192,6 +204,14 @@ class SocketService {
     const socketId = this.connectedUsers.get(userId);
     if (socketId) {
       this.io.to(socketId).emit('notification', notification);
+    }
+  }
+
+  // Method to emit custom event to a specific user
+  public emitToUser(userId: string, event: string, payload: any) {
+    const socketId = this.connectedUsers.get(userId);
+    if (socketId) {
+      this.io.to(socketId).emit(event, payload);
     }
   }
 

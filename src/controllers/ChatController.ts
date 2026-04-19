@@ -5,6 +5,7 @@ import { User } from '../models/user';
 import { UserTokenBalance, TokenTransaction, ETransactionType, ETransactionStatus } from '../models/token';
 import mongoose from 'mongoose';
 import { NotificationService } from '../services/notificationService';
+import { socketService } from '../App';
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -37,6 +38,16 @@ class ChatController {
         ? new Date(lastActivityAt.getTime() + ChatController.INACTIVITY_MS)
         : null;
 
+    const durationSeconds =
+      chat.consultation_started_at && chat.consultation_ended_at
+        ? Math.max(
+            0,
+            Math.floor(
+              (new Date(chat.consultation_ended_at).getTime() - new Date(chat.consultation_started_at).getTime()) / 1000
+            )
+          )
+        : 0;
+
     return {
       chat_id: chat._id,
       status: chat.consultation_status || "pending",
@@ -47,7 +58,94 @@ class ChatController {
       started_at: chat.consultation_started_at || null,
       ended_at: chat.consultation_ended_at || null,
       auto_end_at: autoEndAt,
+      duration_minutes: Math.floor(durationSeconds / 60),
+      duration_seconds: durationSeconds,
+      token_usage: chat.consultation_token_usage || 0,
     };
+  }
+
+  private static async computeTokenUsage(chat: any, billableSeconds: number): Promise<number> {
+    try {
+      const lawyer = await User.findById(chat.lawyer_id).select('charges chat_rate');
+      const perMinuteTokens = Number((lawyer as any)?.chat_rate || lawyer?.charges || 0);
+      if (perMinuteTokens <= 0 || billableSeconds <= 0) return 0;
+      return Math.max(0, Math.round((billableSeconds / 60) * perMinuteTokens));
+    } catch {
+      return 0;
+    }
+  }
+
+  private static async applyFinalTokenDeduction(chat: any, tokenUsage: number, billableSeconds: number) {
+    if (!chat || tokenUsage <= 0 || chat.consultation_tokens_deducted) {
+      return tokenUsage <= 0 ? 0 : tokenUsage;
+    }
+    try {
+      const updatedBalance = await (UserTokenBalance as any).useTokens(chat.client_id.toString(), tokenUsage);
+      await TokenTransaction.create({
+        user_id: chat.client_id,
+        type: ETransactionType.usage,
+        amount: -tokenUsage,
+        description: `Chat consultation finalized (${billableSeconds}s billable)`,
+        category: 'Chat Consultation',
+        status: ETransactionStatus.completed,
+        reference_id: chat._id.toString(),
+        metadata: {
+          consultationType: 'chat',
+          sessionId: chat._id.toString(),
+          billableSeconds,
+          tokenUsage,
+          remainingBalance: updatedBalance.current_balance
+        }
+      });
+      return tokenUsage;
+    } catch (error) {
+      console.error("Final token deduction failed:", error);
+      return 0;
+    }
+  }
+
+  private static async emitConsultationStatusToParticipants(chat: any) {
+    if (!chat || !socketService) return;
+    const participantIds = [chat.client_id?.toString(), chat.lawyer_id?.toString()].filter(Boolean) as string[];
+    for (const participantId of participantIds) {
+      socketService.emitToUser(
+        participantId,
+        'chat.consultation.status.updated',
+        ChatController.buildConsultationStatus(chat, participantId)
+      );
+    }
+  }
+
+  private static async notifyConsultationEndedIfNeeded(chat: any, endedBy: string, endReason: 'manual' | 'inactivity') {
+    if (!chat || !chat._id) return;
+    if (chat.consultation_end_notified) return;
+    if (!['ended', 'auto_ended'].includes(chat.consultation_status)) return;
+
+    const updated = await Chat.findOneAndUpdate(
+      { _id: chat._id, consultation_end_notified: false, consultation_status: { $in: ['ended', 'auto_ended'] } },
+      { $set: { consultation_end_notified: true } },
+      { new: true }
+    );
+    if (!updated) return;
+
+    const durationSeconds = updated.consultation_started_at && updated.consultation_ended_at
+      ? Math.max(0, Math.floor((new Date(updated.consultation_ended_at).getTime() - new Date(updated.consultation_started_at).getTime()) / 1000))
+      : 0;
+    const tokenUsage = updated.consultation_token_usage || 0;
+
+    await NotificationService.notifyChatEnded(updated, endedBy, endReason, tokenUsage, durationSeconds);
+
+    if (socketService) {
+      const notificationPayload = {
+        type: 'chat_ended',
+        chat_id: updated._id,
+        endReason,
+        tokenUsage,
+        durationSeconds,
+      };
+      socketService.sendNotificationToUser(updated.client_id.toString(), notificationPayload);
+      socketService.sendNotificationToUser(updated.lawyer_id.toString(), notificationPayload);
+    }
   }
 
   private static computeInactiveBillableSeconds(startedAt: Date, endedAt: Date): number {
@@ -72,6 +170,8 @@ class ChatController {
       endedAt
     );
 
+    const computedTokenUsage = await ChatController.computeTokenUsage(chat, billableSeconds);
+    const finalTokenUsage = await ChatController.applyFinalTokenDeduction(chat, computedTokenUsage, billableSeconds);
     await Chat.findOneAndUpdate(
       { _id: chat._id, consultation_status: "active" },
       {
@@ -80,12 +180,17 @@ class ChatController {
           consultation_ended_at: endedAt,
           consultation_end_reason: "inactivity",
           consultation_billable_seconds: billableSeconds,
+          consultation_token_usage: finalTokenUsage,
+          consultation_tokens_deducted: finalTokenUsage > 0 ? true : chat.consultation_tokens_deducted,
         },
       },
       { new: true }
     );
 
-    return await Chat.findById(chat._id);
+    const updated = await Chat.findById(chat._id);
+    await ChatController.emitConsultationStatusToParticipants(updated);
+    await ChatController.notifyConsultationEndedIfNeeded(updated, chat.client_id.toString(), 'inactivity');
+    return updated;
   }
   // Create or get existing chat
   static async createChat(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -205,71 +310,6 @@ class ChatController {
       await newChat.save();
       await newChat.populate('lawyer_id', 'first_name last_name email profile_image charges');
       await newChat.populate('client_id', 'first_name last_name email profile_image');
-
-      // If client initiated and lawyer has charges, deduct tokens
-      if (currentUser.account_type === 'client') {
-        const lawyer = await User.findById(lawyerId).select('charges first_name last_name');
-        const tokensToDeduct = lawyer?.charges || 0;
-        
-        if (tokensToDeduct > 0) {
-          try {
-            // Deduct tokens from client's balance
-            const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, tokensToDeduct);
-            
-            // Create transaction record
-            await TokenTransaction.create({
-              user_id: clientId,
-              type: ETransactionType.usage,
-              amount: -tokensToDeduct,
-              description: `Chat consultation started with ${lawyer.first_name} ${lawyer.last_name}`,
-              category: 'Chat Consultation',
-              status: ETransactionStatus.completed,
-              reference_id: newChat._id.toString(),
-              metadata: {
-                lawyerId: lawyerId,
-                lawyerName: `${lawyer.first_name} ${lawyer.last_name}`,
-                consultationType: 'chat',
-                sessionId: newChat._id.toString()
-              }
-            });
-
-            // Send notification for new chat
-            try {
-              await NotificationService.notifyChatStarted(newChat, userId);
-            } catch (notificationError) {
-              console.error('Failed to send chat notification:', notificationError);
-            }
-
-            res.status(201).json({
-              success: true,
-              message: 'Chat created successfully. Tokens deducted.',
-              data: {
-                _id: newChat._id,
-                lawyer_id: newChat.lawyer_id,
-                client_id: newChat.client_id,
-                lastMessage: null,
-                unreadCount: 0,
-                createdAt: newChat.createdAt,
-                updatedAt: newChat.updatedAt,
-                tokenInfo: {
-                  tokensDeducted: tokensToDeduct,
-                  remainingBalance: updatedBalance.current_balance,
-                  lawyerCharges: lawyer.charges
-                }
-              }
-            });
-            return;
-          } catch (tokenError: any) {
-            // If token deduction fails, delete the created chat
-            await Chat.findByIdAndDelete(newChat._id);
-            res.status(400).json({
-              success: false,
-              message: tokenError.message || 'Failed to deduct tokens'
-            });
-            return;
-          }
-        }
-      }
 
       // Send notification for new chat (no tokens case)
       try {
@@ -661,6 +701,19 @@ class ChatController {
         );
       }
 
+      await ChatController.emitConsultationStatusToParticipants(updated);
+      if (updated && chat.client_id.toString() === userId) {
+        await NotificationService.notifyChatStarted(updated, userId);
+        if (socketService) {
+          socketService.sendNotificationToUser(chat.lawyer_id.toString(), {
+            type: 'consultation_started',
+            chat_id: chat._id,
+            title: 'Consultation started',
+            message: 'Client clicked Start Chat'
+          });
+        }
+      }
+
       res.status(200).json({ success: true, data: ChatController.buildConsultationStatus(updated, userId) });
     } catch (error: any) {
       console.error("Error starting consultation:", error);
@@ -701,6 +754,8 @@ class ChatController {
         const billableSeconds = chat.consultation_started_at
           ? ChatController.computeInactiveBillableSeconds(new Date(chat.consultation_started_at), endedAt)
           : 0;
+        const computedTokenUsage = await ChatController.computeTokenUsage(chat, billableSeconds);
+        const finalTokenUsage = await ChatController.applyFinalTokenDeduction(chat, computedTokenUsage, billableSeconds);
 
         const updated = await Chat.findOneAndUpdate(
           { _id: chat._id, consultation_status: { $in: ["active", "pending"] } },
@@ -710,21 +765,30 @@ class ChatController {
               consultation_ended_at: endedAt,
               consultation_end_reason: "inactivity",
               consultation_billable_seconds: billableSeconds,
+              consultation_token_usage: finalTokenUsage,
+              consultation_tokens_deducted: finalTokenUsage > 0 ? true : chat.consultation_tokens_deducted,
             },
           },
           { new: true }
         );
 
+        await ChatController.emitConsultationStatusToParticipants(updated);
+        await ChatController.notifyConsultationEndedIfNeeded(updated, userId, 'inactivity');
         res.status(200).json({ success: true, data: ChatController.buildConsultationStatus(updated, userId) });
         return;
       }
 
       const me = new mongoose.Types.ObjectId(userId);
+      const alreadyEndedByMe = (chat.consultation_ended_by || []).some((id: any) => id.toString() === userId);
       const alreadyOtherEnded = (chat.consultation_ended_by || []).some((id: any) => id.toString() !== userId);
       const endedAt = new Date();
       const billableSeconds = chat.consultation_started_at
         ? Math.max(0, Math.floor((endedAt.getTime() - new Date(chat.consultation_started_at).getTime()) / 1000))
         : 0;
+      const computedTokenUsage = await ChatController.computeTokenUsage(chat, billableSeconds);
+      const finalTokenUsage = alreadyOtherEnded
+        ? await ChatController.applyFinalTokenDeduction(chat, computedTokenUsage, billableSeconds)
+        : (chat.consultation_token_usage || 0);
 
       await Chat.findByIdAndUpdate(chat._id, {
         $addToSet: { consultation_ended_by: me },
@@ -735,12 +799,35 @@ class ChatController {
                 consultation_ended_at: endedAt,
                 consultation_end_reason: "manual",
                 consultation_billable_seconds: billableSeconds,
+                consultation_token_usage: finalTokenUsage,
+                consultation_tokens_deducted: finalTokenUsage > 0 ? true : chat.consultation_tokens_deducted,
               },
             }
           : {}),
       });
 
       const updated = await Chat.findById(chat._id);
+      await ChatController.emitConsultationStatusToParticipants(updated);
+      // If this is the first manual end click (not finalized yet), notify the other participant.
+      if (!alreadyOtherEnded && !alreadyEndedByMe && updated) {
+        await NotificationService.notifyChatEndRequested(updated, userId);
+        if (socketService) {
+          const otherUserId = updated.client_id.toString() === userId
+            ? updated.lawyer_id.toString()
+            : updated.client_id.toString();
+          socketService.sendNotificationToUser(otherUserId, {
+            type: 'chat_end_requested',
+            chat_id: updated._id,
+            title: 'End Chat Requested',
+            message: updated.client_id.toString() === userId
+              ? 'Client requested to end the chat.'
+              : 'Lawyer requested to end the chat.'
+          });
+        }
+      }
+      if (updated?.consultation_status === 'ended') {
+        await ChatController.notifyConsultationEndedIfNeeded(updated, userId, 'manual');
+      }
       res.status(200).json({ success: true, data: ChatController.buildConsultationStatus(updated, userId) });
     } catch (error: any) {
       console.error("Error ending consultation:", error);

@@ -11,6 +11,9 @@ export interface IChat extends Document {
   consultation_ended_at?: Date | null;
   consultation_last_activity_at?: Date | null;
   consultation_billable_seconds: number;
+  consultation_token_usage: number;
+  consultation_tokens_deducted: boolean;
+  consultation_end_notified: boolean;
   consultation_end_reason?: 'manual' | 'inactivity' | null;
   createdAt: Date;
   updatedAt: Date;
@@ -61,6 +64,18 @@ const ChatSchema: Schema = new Schema({
   consultation_billable_seconds: {
     type: Number,
     default: 0
+  },
+  consultation_token_usage: {
+    type: Number,
+    default: 0
+  },
+  consultation_tokens_deducted: {
+    type: Boolean,
+    default: false
+  },
+  consultation_end_notified: {
+    type: Boolean,
+    default: false
   },
   consultation_end_reason: {
     type: String,

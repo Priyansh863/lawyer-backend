@@ -47,16 +47,22 @@ class UserController {
 
       const savedUser = await newUser.save();
 
-      // Send registration email with verification link and temporary password
+      // Send registration email with verification link and temporary password.
+      // Keep user creation successful even if mail provider is temporarily unavailable.
+      let emailSent = true;
       try {
-        await sendRegistrationEmail(
-          email, 
-          verificationToken, 
+        const emailResult = await sendRegistrationEmail(
+          email,
+          verificationToken,
           tempPassword
         );
+        if ((emailResult as any)?.isError) {
+          emailSent = false;
+          console.error("Registration email failed for:", email);
+        }
       } catch (emailError) {
+        emailSent = false;
         console.error('Error sending registration email:', emailError);
-        // Don't fail the user creation if email fails
       }
 
       res.status(201).json({
@@ -65,9 +71,12 @@ class UserController {
           _id: savedUser._id,
           email: savedUser.email,
           account_type: savedUser.account_type,
-          is_verified: savedUser.is_verified
+          is_verified: savedUser.is_verified,
+          email_sent: emailSent
         },
-        message: '사용자가 성공적으로 초대되었습니다. 인증 링크가 포함된 등록 이메일이 전송되었습니다.'
+        message: emailSent
+          ? '사용자가 성공적으로 초대되었습니다. 인증 링크가 포함된 등록 이메일이 전송되었습니다.'
+          : '사용자는 생성되었지만 현재 이메일 발송에 실패했습니다. 메일 설정(SendGrid 크레딧/API 키)을 확인해 주세요.'
       });
     } catch (error) {
       console.error('Error creating user:', error);

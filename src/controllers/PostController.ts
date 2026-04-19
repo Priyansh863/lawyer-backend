@@ -29,6 +29,18 @@ class PostController {
     private static readonly ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
     private static readonly VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov'];
     private static readonly MAX_VIDEOS = 3;
+    /** Populated author fields for API responses (canonical image: profile_image). */
+    private static readonly AUTHOR_POPULATE = 'first_name last_name email profile_image avatar';
+
+    private static normalizePostAuthor(author: any): any {
+      if (author == null) return author;
+      const plain =
+        author && typeof author.toObject === 'function'
+          ? author.toObject({ virtuals: true })
+          : { ...author };
+      const img = plain.profile_image || plain.avatar || null;
+      return { ...plain, profile_image: img, avatar: img };
+    }
 
     private static isSupportedVideoUrl(url: string): boolean {
       const value = (url || '').trim().toLowerCase();
@@ -192,7 +204,7 @@ class PostController {
       });
 
       await newPost.save();
-      await newPost.populate('author', 'first_name last_name email avatar');
+      await newPost.populate('author', PostController.AUTHOR_POPULATE);
 
       // Generate QR code if spatial info is present
       let qrCodeDataUrl = null;
@@ -213,7 +225,7 @@ class PostController {
           _id: newPost._id,
           title: newPost.title,
           content: newPost.content,
-          author: newPost.author,
+          author: PostController.normalizePostAuthor(newPost.author),
           slug: newPost.slug,
           spatialInfo: newPost.spatialInfo,
           citations: newPost.citations,
@@ -268,7 +280,7 @@ class PostController {
       const skip = (page - 1) * limit;
 
       const posts = await Post.find(filter)
-        .populate('author', 'first_name last_name email avatar')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .populate('citations.userId', 'first_name last_name email')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -284,7 +296,7 @@ class PostController {
             _id: post._id,
             title: post.title,
             content: post.content,
-            author: post.author,
+            author: PostController.normalizePostAuthor(post.author),
             slug: post.slug,
             spatialInfo: post.spatialInfo,
             citations: post.citations,
@@ -334,7 +346,7 @@ class PostController {
       }
 
       const post = await Post.findOne({ slug })
-        .populate('author', 'first_name last_name email avatar')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .populate('citations.userId', 'first_name last_name email');
 
       if (!post) {
@@ -351,7 +363,7 @@ class PostController {
           _id: post._id,
           title: post.title,
           content: post.content,
-          author: post.author,
+          author: PostController.normalizePostAuthor(post.author),
           slug: post.slug,
           spatialInfo: post.spatialInfo,
           citations: post.citations,
@@ -393,7 +405,7 @@ class PostController {
       }
 
       const post = await Post.findById(id)
-        .populate('author', 'first_name last_name email avatar')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .populate('citations.userId', 'first_name last_name email');
 
       if (!post) {
@@ -410,7 +422,7 @@ class PostController {
           _id: post._id,
           title: post.title,
           content: post.content,
-          author: post.author,
+          author: PostController.normalizePostAuthor(post.author),
           slug: post.slug,
           spatialInfo: post.spatialInfo,
           citations: post.citations,
@@ -557,7 +569,7 @@ class PostController {
 
       // Get user's posts with pagination
       const posts = await Post.find(filter)
-        .populate('author', 'first_name last_name email avatar')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .populate('citations.userId', 'first_name last_name email')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -574,7 +586,7 @@ class PostController {
             _id: post._id,
             title: post.title,
             content: post.content,
-            author: post.author,
+            author: PostController.normalizePostAuthor(post.author),
             slug: post.slug,
             spatialInfo: post.spatialInfo,
             citations: post.citations,
@@ -667,7 +679,7 @@ class PostController {
       }
 
       const posts = await Post.find(searchQuery)
-        .populate('author', 'first_name last_name email')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -680,7 +692,10 @@ class PostController {
         success: true,
         message: "Posts retrieved successfully",
         data: {
-          posts,
+          posts: posts.map((p: any) => ({
+            ...p,
+            author: PostController.normalizePostAuthor(p.author),
+          })),
           pagination: {
             currentPage: page,
             totalPages,
@@ -730,7 +745,7 @@ class PostController {
         _id: { $ne: id }, // Exclude current post
         author: currentPost.author
       })
-        .populate('author', 'first_name last_name email')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .sort({ createdAt: -1 })
         .limit(limit)
         .lean();
@@ -738,7 +753,10 @@ class PostController {
       res.status(200).json({
         success: true,
         message: "Related posts retrieved successfully",
-        data: relatedPosts
+        data: relatedPosts.map((p: any) => ({
+          ...p,
+          author: PostController.normalizePostAuthor(p.author),
+        }))
       });
     } catch (error: any) {
       console.error("Error fetching related posts:", error);
@@ -776,7 +794,7 @@ class PostController {
       const limit = parseInt(req.query.limit as string) || 10;
 
       const popularPosts = await Post.find()
-        .populate('author', 'first_name last_name email')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .sort({ views: -1, createdAt: -1 }) // Sort by views if available
         .limit(limit)
         .lean();
@@ -784,7 +802,10 @@ class PostController {
       res.status(200).json({
         success: true,
         message: "Popular posts retrieved successfully",
-        data: popularPosts
+        data: popularPosts.map((p: any) => ({
+          ...p,
+          author: PostController.normalizePostAuthor(p.author),
+        }))
       });
     } catch (error: any) {
       console.error("Error fetching popular posts:", error);
@@ -802,7 +823,7 @@ class PostController {
       const limit = parseInt(req.query.limit as string) || 5;
 
       const recentPosts = await Post.find()
-        .populate('author', 'first_name last_name email')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .sort({ createdAt: -1 })
         .limit(limit)
         .lean();
@@ -810,7 +831,10 @@ class PostController {
       res.status(200).json({
         success: true,
         message: "Recent posts retrieved successfully",
-        data: recentPosts
+        data: recentPosts.map((p: any) => ({
+          ...p,
+          author: PostController.normalizePostAuthor(p.author),
+        }))
       });
     } catch (error: any) {
       console.error("Error fetching recent posts:", error);
@@ -842,7 +866,7 @@ class PostController {
           { content: { $regex: query, $options: 'i' } }
         ]
       })
-        .populate('author', 'first_name last_name email')
+        .populate('author', PostController.AUTHOR_POPULATE)
         .sort({ createdAt: -1 })
         .limit(limit)
         .lean();
@@ -850,7 +874,10 @@ class PostController {
       res.status(200).json({
         success: true,
         message: "Posts search completed successfully",
-        data: posts
+        data: posts.map((p: any) => ({
+          ...p,
+          author: PostController.normalizePostAuthor(p.author),
+        }))
       });
     } catch (error: any) {
       console.error("Error searching posts:", error);
@@ -918,11 +945,14 @@ class PostController {
       });
 
       await post.save();
+      await post.populate('author', PostController.AUTHOR_POPULATE);
+      const postPayload = post.toObject({ virtuals: true }) as any;
+      postPayload.author = PostController.normalizePostAuthor(postPayload.author);
 
       res.status(200).json({
         success: true,
         message: 'Post updated successfully',
-        data: post
+        data: postPayload
       });
 
     } catch (error: any) {
@@ -1207,7 +1237,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
       });
 
       await newPost.save();
-      await newPost.populate('author', 'first_name last_name email avatar');
+      await newPost.populate('author', PostController.AUTHOR_POPULATE);
 
       // Generate QR code if spatial info is present
       let qrCodeDataUrl = null;
@@ -1228,7 +1258,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           _id: newPost._id,
           title: newPost.title,
           content: newPost.content,
-          author: newPost.author,
+          author: PostController.normalizePostAuthor(newPost.author),
           slug: newPost.slug,
           spatialInfo: newPost.spatialInfo,
           citations: newPost.citations,
@@ -1385,7 +1415,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           path: 'postId',
           populate: {
             path: 'author',
-            select: 'first_name last_name email avatar'
+            select: PostController.AUTHOR_POPULATE.replace(/\s+/g, ' ')
           }
         })
         .sort({ createdAt: -1 })
@@ -1401,7 +1431,7 @@ IMPORTANT: Return ONLY valid JSON format with no additional text, explanations, 
           _id: bookmark.postId._id,
           title: bookmark.postId.title,
           content: bookmark.postId.content,
-          author: bookmark.postId.author,
+          author: PostController.normalizePostAuthor(bookmark.postId.author),
           slug: bookmark.postId.slug,
           spatialInfo: bookmark.postId.spatialInfo,
           citations: bookmark.postId.citations,

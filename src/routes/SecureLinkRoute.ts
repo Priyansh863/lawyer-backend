@@ -19,4 +19,7 @@ router.post("/upload", SecureLinkController.uploadThroughSecureLink);
 // Get lawyer's secure links (lawyer only)
 router.get("/my-links", authenticateToken, SecureLinkController.getMySecureLinks);
 
+// Update password for an existing active secure link (lawyer only)
+router.patch("/:id/password", authenticateToken, SecureLinkController.updateSecureLinkPassword);
+
 export default router;

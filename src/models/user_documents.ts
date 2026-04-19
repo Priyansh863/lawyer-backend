@@ -45,6 +45,8 @@ export interface IUserDocument extends Document {
   shared_with: mongoose.Types.ObjectId[]; // Array of user IDs this document is shared with
   is_secure_link?: boolean; // Documents uploaded via secure link
   storage_type: StorageType;
+  /** Set when a desktop delete command was queued (PATCH remove-app). */
+  pc_delete_queued_at?: Date | null;
   created_at: Date;
   updated_at: Date;
   is_shared: boolean; // Virtual field
@@ -110,6 +112,10 @@ const UserDocumentSchema: Schema = new Schema(
       type: String,
       enum: Object.values(StorageType),
       default: StorageType.CLOUD
+    },
+    pc_delete_queued_at: {
+      type: Date,
+      default: null
     }
   },
   {

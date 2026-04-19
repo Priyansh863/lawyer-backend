@@ -40,6 +40,11 @@ const UserSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    /** Legacy / client alias; kept in sync with profile_image when present. */
+    avatar: {
+      type: String,
+      required: false,
+    },
     pratice_area: {
       type: String,
       required: false,
@@ -162,6 +167,13 @@ const UserSchema = new mongoose.Schema(
 // name virtual to return the concatenated first and last name
 UserSchema.virtual('name').get(function() {
   return `${this.first_name || ''} ${this.last_name || ''}`.trim();
+});
+
+UserSchema.pre('save', function (next) {
+  const doc = this as any;
+  if (doc.profile_image && !doc.avatar) doc.avatar = doc.profile_image;
+  if (doc.avatar && !doc.profile_image) doc.profile_image = doc.avatar;
+  next();
 });
 
 UserSchema.set('toObject', { virtuals: true });

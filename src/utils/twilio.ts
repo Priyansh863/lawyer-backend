@@ -41,7 +41,7 @@ export const sendMail = async (content: any, email: string) => {
   } catch (error) {
     console.log("Mail send failed", JSON.stringify(error));
     return {
-      isError: false,
+      isError: true,
       message: error,
     };
   }

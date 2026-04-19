@@ -7,7 +7,7 @@ export interface CreateNotificationData {
   titleKo?: string;
   message: string;
   messageKo?: string;
-  type: 'case_created' | 'case_status_changed' | 'document_uploaded' | 'chat_started' | 'chat_message' | 'video_consultation_started' | 'qa_question_posted' | 'qa_answer_posted' | 'general';
+  type: 'case_created' | 'case_status_changed' | 'document_uploaded' | 'chat_started' | 'chat_end_requested' | 'chat_ended' | 'chat_message' | 'video_consultation_started' | 'qa_question_posted' | 'qa_answer_posted' | 'general';
   relatedId?: mongoose.Types.ObjectId | string;
   relatedType?: 'case' | 'document' | 'chat' | 'meeting' | 'qa_question' | 'qa_answer';
   redirectUrl?: string;
@@ -180,6 +180,61 @@ export class NotificationService {
       });
     } catch (error) {
       console.error('Error notifying chat started:', error);
+    }
+  }
+
+  static async notifyChatEnded(chatData: any, endedBy: mongoose.Types.ObjectId | string, endReason: 'manual' | 'inactivity', tokenUsage: number, durationSeconds: number) {
+    try {
+      const userIds = [chatData.client_id, chatData.lawyer_id].filter(Boolean);
+      await this.createBulkNotifications(userIds, {
+        title: 'Chat Ended',
+        titleKo: '채팅 종료됨',
+        message: endReason === 'inactivity'
+          ? `Chat ended automatically due to inactivity.`
+          : `Chat has been ended.`,
+        messageKo: endReason === 'inactivity'
+          ? `비활성 상태로 인해 채팅이 자동 종료되었습니다.`
+          : `채팅이 종료되었습니다.`,
+        type: 'chat_ended',
+        relatedId: chatData._id,
+        relatedType: 'chat',
+        redirectUrl: `/chat/${chatData._id}`,
+        priority: 'medium',
+        metadata: { endReason, tokenUsage, durationSeconds },
+        createdBy: endedBy
+      });
+    } catch (error) {
+      console.error('Error notifying chat ended:', error);
+    }
+  }
+
+  static async notifyChatEndRequested(chatData: any, requestedBy: mongoose.Types.ObjectId | string) {
+    try {
+      const requesterId = requestedBy.toString();
+      const otherUserId = chatData.client_id.toString() === requesterId
+        ? chatData.lawyer_id
+        : chatData.client_id;
+
+      await this.createNotification({
+        userId: otherUserId,
+        title: 'End Chat Requested',
+        titleKo: '채팅 종료 요청됨',
+        message: chatData.client_id.toString() === requesterId
+          ? `Client requested to end the chat.`
+          : `Lawyer requested to end the chat.`,
+        messageKo: chatData.client_id.toString() === requesterId
+          ? `고객이 채팅 종료를 요청했습니다.`
+          : `변호사가 채팅 종료를 요청했습니다.`,
+        type: 'chat_end_requested',
+        relatedId: chatData._id,
+        relatedType: 'chat',
+        redirectUrl: `/chat/${chatData._id}`,
+        priority: 'high',
+        metadata: { requestedBy: requesterId },
+        createdBy: requestedBy
+      });
+    } catch (error) {
+      console.error('Error notifying chat end requested:', error);
     }
   }
 

@@ -22,6 +22,8 @@ export interface IUserSchema {
   email?: string;
   password?: string;
   profile_image?: string;
+  /** Alias for profile_image (legacy / API compatibility). */
+  avatar?: string;
   additional_images?: Array<string>;
   phone: string;
   is_active?: number;

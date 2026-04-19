@@ -6,6 +6,9 @@ import { User } from '../models/user';
 import UserDocument from '../models/user_documents';
 import { compressBase64 } from '../utils/documentUtils';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import dbConfig from '../config/secretManagerConfig';
+import { ISecretManagerData } from '../Interfaces/commonInterfaces';
 
 // Define AuthenticatedRequest interface
 interface AuthenticatedRequest extends Request {
@@ -16,6 +19,10 @@ interface AuthenticatedRequest extends Request {
 }
 
 class SecureLinkController {
+  private static authAttemptWindowMs = 15 * 60 * 1000;
+  private static authAttemptLimit = 8;
+  private static authAttemptMap = new Map<string, { count: number; firstAt: number }>();
+
   private static isExpired(expiresAt: Date): boolean {
     return new Date() >= new Date(expiresAt);
   }
@@ -23,13 +30,71 @@ class SecureLinkController {
   private static getStatus(expiresAt: Date): "active" | "expired" {
     return SecureLinkController.isExpired(expiresAt) ? "expired" : "active";
   }
+
+  private static getClientLabel(secureLink: any): { client_name: string | null; client_email: string | null } {
+    if (secureLink.mode === "non_customer") {
+      return { client_name: "Non-Customer User", client_email: null };
+    }
+    return {
+      client_name: secureLink.client_id
+        ? `${(secureLink.client_id as any).first_name} ${(secureLink.client_id as any).last_name}`
+        : null,
+      client_email: secureLink.client_id ? (secureLink.client_id as any).email : null,
+    };
+  }
+
+  private static getAuthKey(req: Request, token: string): string {
+    return `${req.ip || "unknown"}:${token}`;
+  }
+
+  private static isAuthRateLimited(req: Request, token: string): boolean {
+    const key = SecureLinkController.getAuthKey(req, token);
+    const now = Date.now();
+    const existing = SecureLinkController.authAttemptMap.get(key);
+    if (!existing) return false;
+    if (now - existing.firstAt > SecureLinkController.authAttemptWindowMs) {
+      SecureLinkController.authAttemptMap.delete(key);
+      return false;
+    }
+    return existing.count >= SecureLinkController.authAttemptLimit;
+  }
+
+  private static recordAuthFailure(req: Request, token: string) {
+    const key = SecureLinkController.getAuthKey(req, token);
+    const now = Date.now();
+    const existing = SecureLinkController.authAttemptMap.get(key);
+    if (!existing || now - existing.firstAt > SecureLinkController.authAttemptWindowMs) {
+      SecureLinkController.authAttemptMap.set(key, { count: 1, firstAt: now });
+      return;
+    }
+    existing.count += 1;
+    SecureLinkController.authAttemptMap.set(key, existing);
+  }
+
+  private static clearAuthFailures(req: Request, token: string) {
+    SecureLinkController.authAttemptMap.delete(SecureLinkController.getAuthKey(req, token));
+  }
+
+  private static async getOptionalAuthUser(req: Request): Promise<{ userId: string; role: string } | null> {
+    const authHeader = (req.headers["auth"] || req.headers["authorization"]) as string | undefined;
+    if (!authHeader) return null;
+    const token = authHeader.split(" ")[1];
+    if (!token || token === "null" || token === "undefined") return null;
+    try {
+      const dbData = (await dbConfig.secretManagerConnection()) as ISecretManagerData;
+      const decoded = jwt.verify(token, dbData.jwtSecretKey) as { _id: string; account_type: string };
+      return { userId: decoded._id, role: decoded.account_type };
+    } catch {
+      return null;
+    }
+  }
   /**
    * Generate a secure upload link for a client
    * POST /api/v1/secure-link/generate
    */
   static async generateSecureLink(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const { client_id, password, expires_in_hours = 24 } = req.body;
+      const { client_id, non_customer_user, password, expires_in_hours = 24 } = req.body;
       const lawyer_id = req.user?.userId;
 
       // Validation
@@ -41,10 +106,20 @@ class SecureLinkController {
         return;
       }
 
-      if (!client_id || !password) {
+      if (!password) {
         res.status(400).json({
           success: false,
-          message: 'Client ID and password are required'
+          message: 'Password is required'
+        });
+        return;
+      }
+
+      const hasClientId = Boolean(client_id);
+      const isNonCustomerMode = non_customer_user === true;
+      if ((hasClientId && isNonCustomerMode) || (!hasClientId && !isNonCustomerMode)) {
+        res.status(400).json({
+          success: false,
+          message: 'Exactly one mode is required: client_id XOR non_customer_user=true',
         });
         return;
       }
@@ -68,30 +143,41 @@ class SecureLinkController {
         return;
       }
 
-      // Verify client exists
-      const client = await User.findById(client_id);
-      if (!client) {
-        res.status(404).json({
-          success: false,
-          message: 'Client not found'
-        });
-        return;
+      const mode: "existing_client" | "non_customer" = isNonCustomerMode ? "non_customer" : "existing_client";
+      let client: any = null;
+      if (mode === "existing_client") {
+        client = await User.findById(client_id);
+        if (!client) {
+          res.status(404).json({
+            success: false,
+            message: 'Client not found'
+          });
+          return;
+        }
       }
 
-      // Check for existing active links for this client-lawyer pair
-      const existingLink = await SecureLink.findOne({
+      // Keep active-link uniqueness per lawyer+mode+target.
+      const existingLinkQuery: any = {
         lawyer_id,
-        client_id,
+        mode,
         expires_at: { $gt: new Date() }
-      });
+      };
+      if (mode === "existing_client") {
+        existingLinkQuery.client_id = client_id;
+      } else {
+        existingLinkQuery.client_id = null;
+      }
+      const existingLink = await SecureLink.findOne(existingLinkQuery);
 
       if (existingLink) {
         res.status(400).json({
           success: false,
-          message: 'An active secure link already exists for this client',
+          message: 'An active secure link already exists',
           data: {
+            link_id: existingLink._id,
             existing_link: existingLink.generateSecureUrl(),
-            expires_at: existingLink.expires_at
+            expires_at: existingLink.expires_at,
+            mode: existingLink.mode,
           }
         });
         return;
@@ -100,10 +186,18 @@ class SecureLinkController {
       // Create secure link
       const secureLink = await SecureLink.createSecureLink(
         new mongoose.Types.ObjectId(lawyer_id),
-        new mongoose.Types.ObjectId(client_id),
+        mode,
         password,
-        expires_in_hours
+        expires_in_hours,
+        mode === "existing_client" ? new mongoose.Types.ObjectId(client_id) : null
       );
+
+      console.log("[audit] secure-link generated", {
+        link_id: secureLink._id.toString(),
+        created_by: lawyer_id,
+        mode: secureLink.mode,
+        client_id: secureLink.client_id?.toString?.() || null,
+      });
 
       res.status(201).json({
         success: true,
@@ -112,8 +206,10 @@ class SecureLinkController {
           link_id: secureLink._id,
           secure_url: secureLink.generateSecureUrl(),
           expires_at: secureLink.expires_at,
-          client_name: `${client.first_name} ${client.last_name}`,
-          client_email: client.email
+          status: SecureLinkController.getStatus(secureLink.expires_at),
+          client_name: mode === "existing_client" ? `${client.first_name} ${client.last_name}` : "Non-Customer User",
+          client_email: mode === "existing_client" ? client.email : null,
+          mode: secureLink.mode,
         }
       });
 
@@ -148,10 +244,22 @@ class SecureLinkController {
       if (!secureLink) {
         res.status(404).json({
           success: false,
-          message: 'Invalid or expired link'
+          message: 'Invalid link'
         });
         return;
       }
+
+      if (SecureLinkController.isExpired(secureLink.expires_at)) {
+        res.status(410).json({
+          success: false,
+          message: "Secure link has expired",
+        });
+        return;
+      }
+
+      const authUser = await SecureLinkController.getOptionalAuthUser(req);
+      const requiresSignup = secureLink.mode === "non_customer" && !authUser;
+      const clientLabel = SecureLinkController.getClientLabel(secureLink);
 
       res.status(200).json({
         success: true,
@@ -159,10 +267,13 @@ class SecureLinkController {
         data: {
           link_id: secureLink._id,
           lawyer_name: `${(secureLink.lawyer_id as any).first_name} ${(secureLink.lawyer_id as any).last_name}`,
-          client_name: `${(secureLink.client_id as any).first_name} ${(secureLink.client_id as any).last_name}`,
+          client_name: clientLabel.client_name,
+          client_email: clientLabel.client_email,
           status: SecureLinkController.getStatus(secureLink.expires_at),
           expires_at: secureLink.expires_at,
-          created_at: secureLink.created_at
+          created_at: secureLink.created_at,
+          mode: secureLink.mode,
+          requires_signup: requiresSignup,
         }
       });
 
@@ -192,12 +303,28 @@ class SecureLinkController {
         return;
       }
 
+      if (SecureLinkController.isAuthRateLimited(req, token)) {
+        res.status(429).json({
+          success: false,
+          message: "Too many authentication attempts. Please try again later.",
+        });
+        return;
+      }
+
       const secureLink = await SecureLink.validateLinkToken(token);
 
       if (!secureLink) {
         res.status(404).json({
           success: false,
-          message: 'Invalid or expired link'
+          message: 'Invalid link'
+        });
+        return;
+      }
+
+      if (SecureLinkController.isExpired(secureLink.expires_at)) {
+        res.status(410).json({
+          success: false,
+          message: "Secure link has expired",
         });
         return;
       }
@@ -206,6 +333,13 @@ class SecureLinkController {
       const isPasswordValid = await secureLink.validatePassword(password);
 
       if (!isPasswordValid) {
+        SecureLinkController.recordAuthFailure(req, token);
+        console.log("[audit] secure-link auth blocked", {
+          reason: "incorrect_password",
+          link_id: secureLink._id.toString(),
+          mode: secureLink.mode,
+          ip: req.ip || null,
+        });
         res.status(401).json({
           success: false,
           message: 'Incorrect password'
@@ -213,12 +347,31 @@ class SecureLinkController {
         return;
       }
 
+      const authUser = await SecureLinkController.getOptionalAuthUser(req);
+      if (secureLink.mode === "non_customer" && !authUser) {
+        SecureLinkController.recordAuthFailure(req, token);
+        console.log("[audit] secure-link auth blocked", {
+          reason: "signup_or_login_required",
+          link_id: secureLink._id.toString(),
+          mode: secureLink.mode,
+          ip: req.ip || null,
+        });
+        res.status(401).json({
+          success: false,
+          message: "Signup/login required for non-customer secure link",
+        });
+        return;
+      }
+      SecureLinkController.clearAuthFailures(req, token);
+
       // Generate temporary upload token (valid for 1 hour)
       const uploadToken = jwt.sign(
         {
           link_id: secureLink._id,
           lawyer_id: secureLink.lawyer_id,
-          client_id: secureLink.client_id,
+          client_id: secureLink.client_id || null,
+          mode: secureLink.mode,
+          authenticated_user_id: authUser?.userId || secureLink.client_id?.toString?.() || null,
           type: 'secure_upload_auth',
           expires_at: secureLink.expires_at
         },
@@ -226,14 +379,16 @@ class SecureLinkController {
         { expiresIn: '1h' }
       );
 
+      const clientLabel = SecureLinkController.getClientLabel(secureLink);
       res.status(200).json({
         success: true,
         message: 'Authentication successful',
         data: {
           upload_token: uploadToken,
           lawyer_name: `${(secureLink.lawyer_id as any).first_name} ${(secureLink.lawyer_id as any).last_name}`,
-          client_name: `${(secureLink.client_id as any).first_name} ${(secureLink.client_id as any).last_name}`,
-          expires_at: secureLink.expires_at
+          client_name: clientLabel.client_name,
+          expires_at: secureLink.expires_at,
+          mode: secureLink.mode,
         }
       });
 
@@ -302,10 +457,66 @@ class SecureLinkController {
         return;
       }
 
+      if (secureLink.mode !== decoded.mode) {
+        console.log("[audit] secure-link upload blocked", {
+          reason: "mode_mismatch",
+          link_id: secureLink._id.toString(),
+          decoded_mode: decoded.mode,
+          mode: secureLink.mode,
+        });
+        res.status(401).json({ success: false, message: "Invalid upload token context" });
+        return;
+      }
+
+      const authUser = await SecureLinkController.getOptionalAuthUser(req);
+      if (secureLink.mode === "non_customer") {
+        if (!authUser) {
+          console.log("[audit] secure-link upload blocked", {
+            reason: "auth_required_non_customer",
+            link_id: secureLink._id.toString(),
+          });
+          res.status(401).json({
+            success: false,
+            message: "Authentication required for non-customer upload",
+          });
+          return;
+        }
+        if (decoded.authenticated_user_id !== authUser.userId) {
+          console.log("[audit] secure-link upload blocked", {
+            reason: "authenticated_user_mismatch",
+            link_id: secureLink._id.toString(),
+            decoded_user: decoded.authenticated_user_id || null,
+            request_user: authUser.userId,
+          });
+          res.status(403).json({
+            success: false,
+            message: "Upload token does not match authenticated user",
+          });
+          return;
+        }
+      }
+
+      const uploadOwnerId =
+        secureLink.mode === "non_customer"
+          ? decoded.authenticated_user_id
+          : decoded.client_id;
+      if (!uploadOwnerId || !mongoose.Types.ObjectId.isValid(String(uploadOwnerId))) {
+        console.log("[audit] secure-link upload blocked", {
+          reason: "invalid_upload_owner",
+          link_id: secureLink._id.toString(),
+          uploadOwnerId: uploadOwnerId || null,
+        });
+        res.status(400).json({
+          success: false,
+          message: "Invalid upload context",
+        });
+        return;
+      }
+
       // Create document record using existing schema
       const document = new UserDocument({
         document_name: file_name,
-        uploaded_by: new mongoose.Types.ObjectId(decoded.client_id),
+        uploaded_by: new mongoose.Types.ObjectId(uploadOwnerId),
         link: file_url,
         file_base64: file_base64 ? compressBase64(file_base64) : undefined,
         file_size: file_size || 0,
@@ -313,7 +524,10 @@ class SecureLinkController {
         status: 'Completed',
         privacy: 'private', // Private document
         shared_with: [new mongoose.Types.ObjectId(decoded.lawyer_id)], // Automatically shared with the lawyer who generated the link
-        summary: `Document uploaded via secure link from ${(secureLink.client_id as any).first_name} ${(secureLink.client_id as any).last_name}`
+        summary:
+          secureLink.mode === "non_customer"
+            ? "Document uploaded via non-customer secure link"
+            : `Document uploaded via secure link from ${(secureLink.client_id as any)?.first_name || ''} ${(secureLink.client_id as any)?.last_name || ''}`.trim()
       });
 
       const savedDocument = await document.save();
@@ -339,8 +553,10 @@ class SecureLinkController {
       console.log("[audit] secure-link upload", {
         link_id: secureLink._id.toString(),
         upload_id: upload._id.toString(),
-        client_id: decoded.client_id,
+        client_id: decoded.client_id || null,
+        uploader_user_id: uploadOwnerId,
         lawyer_id: decoded.lawyer_id,
+        mode: secureLink.mode,
         uploaded_at: upload.uploaded_at,
       });
 
@@ -421,13 +637,19 @@ class SecureLinkController {
         message: 'Secure links retrieved successfully',
         data: {
           links: links.map(link => ({
+            ...(() => {
+              const label = SecureLinkController.getClientLabel(link);
+              return {
+                client_name: label.client_name,
+                client_email: label.client_email,
+              };
+            })(),
             link_id: link._id,
-            client_name: `${(link.client_id as any).first_name} ${(link.client_id as any).last_name}`,
-            client_email: (link.client_id as any).email,
             secure_url: link.generateSecureUrl(),
             created_at: link.created_at,
             expires_at: link.expires_at,
             status: SecureLinkController.getStatus(link.expires_at),
+            mode: (link as any).mode || "existing_client",
             upload_count: uploadMap.get((link as any)._id.toString())?.upload_count || 0,
             latest_upload_at: uploadMap.get((link as any)._id.toString())?.latest_upload_at || null,
             // Backward compatible fields
@@ -450,6 +672,85 @@ class SecureLinkController {
         success: false,
         message: 'Failed to retrieve secure links',
         error: error.message
+      });
+    }
+  }
+
+  /**
+   * Update password for an existing secure link (active only)
+   * PATCH /api/v1/secure-link/:id/password
+   * Body: { password: string }
+   */
+  static async updateSecureLinkPassword(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const lawyer_id = req.user?.userId;
+      const { id } = req.params;
+      const { password } = req.body as { password?: string };
+
+      if (!lawyer_id) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, message: 'Invalid link id' });
+        return;
+      }
+
+      if (!password || typeof password !== 'string' || password.trim().length < 6) {
+        res.status(400).json({
+          success: false,
+          message: 'Password must be at least 6 characters long',
+        });
+        return;
+      }
+
+      const lawyer = await User.findById(lawyer_id).select('account_type').lean();
+      if (!lawyer || (lawyer as any).account_type !== 'lawyer') {
+        res.status(403).json({ success: false, message: 'Only lawyers can update secure links' });
+        return;
+      }
+
+      const secureLink = await SecureLink.findById(id).populate('client_id', 'first_name last_name email');
+      if (!secureLink) {
+        res.status(404).json({ success: false, message: 'Secure link not found' });
+        return;
+      }
+
+      if ((secureLink.created_by?.toString?.() || secureLink.lawyer_id.toString()) !== lawyer_id) {
+        res.status(403).json({ success: false, message: 'Forbidden' });
+        return;
+      }
+
+      if (SecureLinkController.isExpired(secureLink.expires_at)) {
+        res.status(400).json({ success: false, message: 'Cannot edit password for an expired link' });
+        return;
+      }
+
+      const saltRounds = 12;
+      secureLink.password_hash = await bcrypt.hash(password.trim(), saltRounds);
+      await secureLink.save();
+
+      const label = SecureLinkController.getClientLabel(secureLink);
+      res.status(200).json({
+        success: true,
+        message: 'Secure link password updated successfully',
+        data: {
+          link_id: secureLink._id,
+          client_name: label.client_name,
+          client_email: label.client_email,
+          secure_url: secureLink.generateSecureUrl(),
+          expires_at: secureLink.expires_at,
+          status: SecureLinkController.getStatus(secureLink.expires_at),
+          mode: (secureLink as any).mode || "existing_client",
+        },
+      });
+    } catch (error: any) {
+      console.error('Update secure link password error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update secure link password',
+        error: error.message,
       });
     }
   }

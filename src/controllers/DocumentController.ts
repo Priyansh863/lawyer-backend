@@ -51,6 +51,46 @@ export default class DocumentController {
       : false;
     return isOwner || isExplicitParticipant;
   }
+
+  /** Owner, shared lawyer, or lawyer with a case for the uploader (mirrors lawyer document visibility). */
+  private static async isRemoveAppAuthorized(doc: any, userId: string): Promise<boolean> {
+    if (!userId || !doc) return false;
+    if (DocumentController.isStorageMutationAuthorized(doc, userId)) return true;
+    const uploadedById =
+      (doc.uploaded_by && (doc.uploaded_by._id ? doc.uploaded_by._id.toString() : doc.uploaded_by.toString())) || '';
+    if (!uploadedById) return false;
+    const requester = await User.findById(userId).select('account_type').lean();
+    if ((requester as any)?.account_type !== 'lawyer') return false;
+    const requesterObjectId = new mongoose.Types.ObjectId(userId);
+    const clientObjectId = new mongoose.Types.ObjectId(uploadedById);
+    const hasCase = await Case.exists({ client_id: clientObjectId, lawyer_id: requesterObjectId });
+    if (!hasCase) return false;
+    if (doc.privacy === DocumentPrivacy.PUBLIC || doc.privacy === DocumentPrivacy.PRIVATE) return true;
+    if (doc.privacy === DocumentPrivacy.FULLY_PRIVATE) {
+      return Array.isArray(doc.shared_with) && doc.shared_with.some((u: any) => u?.toString?.() === userId);
+    }
+    return false;
+  }
+
+  private static hasPcCopyForDesktopDelete(
+    doc: any,
+    localPath?: string,
+    syncKey?: string
+  ): boolean {
+    const st = doc.storage_type;
+    if (st === StorageType.APP || st === StorageType.APP_CLOUD) return true;
+    const pathHint =
+      (doc.storage_location && String(doc.storage_location).trim()) ||
+      (localPath && String(localPath).trim()) ||
+      (syncKey && String(syncKey).trim());
+    return st === StorageType.CLOUD && Boolean(pathHint);
+  }
+
+  private static canBulkDeleteDocument(doc: any, userId: string, role?: string): boolean {
+    if (!userId || !doc) return false;
+    if (role === 'admin') return true;
+    return doc.uploaded_by?.toString?.() === userId;
+  }
   /**
    * Enhanced upload supporting PDF, Image, and Video files with AI processing
    * @param req.body.file (base64 string)
@@ -696,6 +736,8 @@ export default class DocumentController {
       file_size: doc?.file_size ?? null,
       storage_type: doc?.storage_type ?? null,
       storage_location: doc?.storage_location ?? null,
+      case_id: doc?.case_id ? doc.case_id.toString() : null,
+      pc_delete_queued_at: doc?.pc_delete_queued_at ?? null,
       shared_with: Array.isArray(doc?.shared_with)
         ? doc.shared_with.map((u: any) => (u?.toString ? u.toString() : u))
         : [],
@@ -803,28 +845,34 @@ export default class DocumentController {
       const clientObjectId = new mongoose.Types.ObjectId(clientId);
       const requesterObjectId = new mongoose.Types.ObjectId(requesterId);
 
-      const requesterHasClientCases = await Case.exists({
+      const caseAccessQuery: any = {
         client_id: clientObjectId,
-        lawyer_id: requesterObjectId,
-      });
+        $or: [
+          { lawyer_id: requesterObjectId },
+          // Some deployments keep additional assignees under assigned_to
+          { assigned_to: requesterObjectId },
+        ],
+      };
 
-      const requesterCases = await Case.find({
-        client_id: clientObjectId,
-        lawyer_id: requesterObjectId,
-      })
+      const requesterHasClientCases = await Case.exists(caseAccessQuery);
+
+      const requesterCases = await Case.find(caseAccessQuery)
         .select("_id")
         .lean();
 
       const caseIdsForRequester = requesterCases.map((c: any) => c._id);
+      if (!caseIdsForRequester.length) {
+        return res.status(200).json({ success: true, data: [] });
+      }
 
-      // Association:
-      // - always include client-owned uploads (uploaded_by == clientId)
-      // - for case-related documents, only include those whose case_id is in the
-      //   requesting lawyer's cases for this client (prevents leaking other lawyers' case docs)
-      const associationQuery: any =
-        caseIdsForRequester.length > 0
-          ? { $or: [{ uploaded_by: clientObjectId }, { case_id: { $in: caseIdsForRequester } }] }
-          : { uploaded_by: clientObjectId };
+      // Strict server-side privacy guard for lawyers:
+      // - document must belong to this client uploader
+      // - document must be explicitly tied to one of the lawyer's client cases
+      // - documents without case_id are hidden
+      const associationQuery: any = {
+        uploaded_by: clientObjectId,
+        case_id: { $in: caseIdsForRequester },
+      };
 
       const isAdmin = requesterRole === "admin";
       const isRequesterClient = requesterId === clientId;
@@ -1044,6 +1092,46 @@ export default class DocumentController {
   static async deleteDocument(req: Request, res: Response) {
     try {
       const { id } = req.params;
+      const requesterId = (req as any).id;
+      const requesterRole = (req as any).role;
+
+      if (!requesterId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized",
+        });
+      }
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid document id",
+        });
+      }
+
+      // Legal/privacy guard: lawyers cannot hard-delete documents from this endpoint.
+      if (requesterRole === "lawyer") {
+        return res.status(403).json({
+          success: false,
+          message: "Not allowed",
+        });
+      }
+
+      const existingDocument = await UserDocument.findById(id).select("_id uploaded_by");
+      if (!existingDocument) {
+        return res.status(404).json({
+          success: false,
+          message: 'Document not found'
+        });
+      }
+
+      const isOwner = existingDocument.uploaded_by?.toString?.() === requesterId;
+      const isAdmin = requesterRole === "admin";
+      if (!isOwner && !isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "Not allowed",
+        });
+      }
 
       const document = await UserDocument.findByIdAndDelete(id);
 
@@ -1766,6 +1854,157 @@ export default class DocumentController {
   }
 
   /**
+   * Queue desktop/Electron client to delete the local file after cloud-only transition.
+   * PATCH /document/:id/remove-app
+   * Body (optional): { localPath?: string; syncKey?: string }
+   */
+  static async removeFromApp(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const userId = (req as any).id;
+      const localPath = req.body?.localPath as string | undefined;
+      const syncKey = req.body?.syncKey as string | undefined;
+
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ success: false, message: 'Invalid document id' });
+      }
+
+      const document = await UserDocument.findById(id);
+      if (!document) {
+        return res.status(404).json({ success: false, message: 'Document not found' });
+      }
+
+      const allowed = await DocumentController.isRemoveAppAuthorized(document, userId);
+      if (!allowed) {
+        return res.status(403).json({ success: false, message: 'Forbidden' });
+      }
+
+      if (document.pc_delete_queued_at) {
+        return res.status(200).json({
+          success: true,
+          queued: false,
+          alreadyQueued: true,
+          documentId: id,
+        });
+      }
+
+      if (!DocumentController.hasPcCopyForDesktopDelete(document, localPath, syncKey)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Document has no PC copy or local path/sync key to delete. Provide localPath or syncKey if the file was only tracked in cloud.',
+        });
+      }
+
+      const ownerId = document.uploaded_by?.toString?.();
+      if (!ownerId) {
+        return res.status(400).json({ success: false, message: 'Document has no uploader' });
+      }
+
+      document.pc_delete_queued_at = new Date();
+      await document.save();
+
+      const payload = {
+        documentId: id,
+        localPath: localPath || document.storage_location || undefined,
+        syncKey: syncKey || undefined,
+        storage_type: document.storage_type,
+      };
+
+      try {
+        const { socketService } = await import('../App');
+        if (socketService) {
+          socketService.emitToUser(ownerId, 'desktop.remove_local_file', payload);
+        }
+      } catch {
+        // Socket may be unavailable during tests or unusual boot order
+      }
+
+      DocumentController.logStorageAudit({
+        action: 'remove_app_queue',
+        user_id: userId,
+        document_id: id,
+        before_type: document.storage_type,
+        after_type: document.storage_type,
+        note: 'desktop delete command emitted',
+      });
+
+      return res.status(200).json({
+        success: true,
+        queued: true,
+        documentId: id,
+      });
+    } catch (error: any) {
+      console.error('Error in removeFromApp:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to queue PC file deletion',
+      });
+    }
+  }
+
+  /**
+   * Delete many documents in one transaction (owner or admin per document).
+   * POST /document/bulk-delete { ids: string[] }
+   */
+  static async bulkDeleteDocuments(req: Request, res: Response) {
+    const userId = (req as any).id;
+    const role = (req as any).role;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+    if (ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'ids must be a non-empty array' });
+    }
+    const unique = [...new Set(ids.map((x: any) => String(x)))].filter((x: string) =>
+      mongoose.Types.ObjectId.isValid(x)
+    );
+    if (unique.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid document ids' });
+    }
+
+    const session = await mongoose.startSession();
+    try {
+      let deleted = 0;
+      let skipped = 0;
+      await session.withTransaction(async () => {
+        for (const docId of unique) {
+          const doc = await UserDocument.findById(docId).session(session);
+          if (!doc) {
+            skipped++;
+            continue;
+          }
+          if (!DocumentController.canBulkDeleteDocument(doc, userId, role)) {
+            skipped++;
+            continue;
+          }
+          await UserDocument.deleteOne({ _id: docId }).session(session);
+          deleted++;
+        }
+      });
+      return res.status(200).json({
+        success: true,
+        deleted,
+        skipped,
+        requested: unique.length,
+      });
+    } catch (error: any) {
+      console.error('bulkDeleteDocuments:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Bulk delete failed',
+      });
+    } finally {
+      session.endSession();
+    }
+  }
+
+  /**
    * Sync local existence state sent by desktop/agent
    * POST /document/sync-local-state
    * Body: { items: [{ document_id, local_exists }] }
@@ -2044,6 +2283,40 @@ export default class DocumentController {
         success: false,
         message: error.message || 'Failed to download document'
       });
+    }
+  }
+
+  static async bulkAssignCase(req: Request, res: Response) {
+    try {
+      const { documentIds, caseId } = req.body;
+
+      if (!documentIds || !Array.isArray(documentIds) || documentIds.length === 0) {
+        return res.status(400).json({ success: false, message: 'Valid documentIds array is required' });
+      }
+      if (!caseId) {
+        return res.status(400).json({ success: false, message: 'caseId is required' });
+      }
+
+      const result = await UserDocument.updateMany(
+        { 
+          _id: { $in: documentIds }
+        },
+        { 
+          $set: { 
+            case_id: caseId,
+            document_type: DocumentType.CASE_RELATED || 'case_related'
+          } 
+        }
+      );
+
+      return res.status(200).json({
+        success: true,
+        modifiedCount: result.modifiedCount,
+        message: 'Cases assigned successfully'
+      });
+    } catch (error) {
+      console.error('Error in bulkAssignCase:', error);
+      return res.status(500).json({ success: false, message: 'Internal server error' });
     }
   }
 }

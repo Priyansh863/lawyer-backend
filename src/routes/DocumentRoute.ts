@@ -25,6 +25,8 @@ router.get("/list", Auth, DocumentController.listDocuments);
 // GET /api/v1/document/sync - Desktop app sync (must be before /:id route)
 router.get("/sync", Auth, DocumentController.syncDocuments);
 router.post("/sync-local-state", Auth, DocumentController.syncLocalState);
+router.post("/bulk-delete", Auth, DocumentController.bulkDeleteDocuments);
+router.patch("/bulk-assign-case", Auth, DocumentController.bulkAssignCase);
 
 // POST /api/v1/document/accessible - Get documents accessible by current user (own + shared)
 router.post("/accessible", Auth, DocumentController.getAccessibleDocuments);
@@ -62,6 +64,7 @@ router.patch("/:id/storage-type", Auth, DocumentController.updateStorageType);
 router.patch("/:id/remove-cloud", Auth, DocumentController.removeFromCloud);
 router.delete("/:id/cloud", Auth, DocumentController.removeFromCloud);
 router.delete("/:id/local", Auth, DocumentController.removeFromLocal);
+router.patch("/:id/remove-app", Auth, DocumentController.removeFromApp);
 
 // DELETE /api/v1/document/:id - Delete document
 router.delete("/:id", Auth, DocumentController.deleteDocument);

@@ -2,9 +2,13 @@ import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
+export type SecureLinkMode = "existing_client" | "non_customer";
+
 export interface ISecureLink extends Document {
   lawyer_id: mongoose.Types.ObjectId;
-  client_id: mongoose.Types.ObjectId;
+  created_by: mongoose.Types.ObjectId;
+  client_id?: mongoose.Types.ObjectId | null;
+  mode: SecureLinkMode;
   link_token: string;
   password_hash: string;
   is_used: boolean;
@@ -21,9 +25,10 @@ export interface ISecureLink extends Document {
 export interface ISecureLinkModel extends mongoose.Model<ISecureLink> {
   createSecureLink(
     lawyerId: mongoose.Types.ObjectId,
-    clientId: mongoose.Types.ObjectId,
+    mode: SecureLinkMode,
     password: string,
-    expiresInHours?: number
+    expiresInHours?: number,
+    clientId?: mongoose.Types.ObjectId | null,
   ): Promise<ISecureLink>;
   validateLinkToken(token: string): Promise<ISecureLink | null>;
 }
@@ -34,10 +39,22 @@ const SecureLinkSchema = new Schema<ISecureLink>({
     ref: 'User',
     required: true
   },
-  client_id: {
+  created_by: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
+  },
+  client_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: false,
+    default: null
+  },
+  mode: {
+    type: String,
+    enum: ['existing_client', 'non_customer'],
+    required: true,
+    default: 'existing_client'
   },
   link_token: {
     type: String,
@@ -98,9 +115,10 @@ SecureLinkSchema.methods.isExpired = function(): boolean {
 // Static Methods
 SecureLinkSchema.statics.createSecureLink = async function(
   lawyerId: mongoose.Types.ObjectId,
-  clientId: mongoose.Types.ObjectId,
+  mode: SecureLinkMode,
   password: string,
-  expiresInHours: number = 24
+  expiresInHours: number = 24,
+  clientId?: mongoose.Types.ObjectId | null,
 ): Promise<ISecureLink> {
   // Hash the password
   const saltRounds = 12;
@@ -109,7 +127,8 @@ SecureLinkSchema.statics.createSecureLink = async function(
   // Generate JWT token with embedded info
   const tokenPayload = {
     lawyerId: lawyerId.toString(),
-    clientId: clientId.toString(),
+    clientId: clientId ? clientId.toString() : null,
+    mode,
     timestamp: Date.now(),
     type: 'secure_upload'
   };
@@ -128,7 +147,9 @@ SecureLinkSchema.statics.createSecureLink = async function(
   // Create the secure link
   const secureLink = new this({
     lawyer_id: lawyerId,
-    client_id: clientId,
+    created_by: lawyerId,
+    client_id: clientId || null,
+    mode,
     link_token,
     password_hash,
     expires_at
@@ -139,9 +160,9 @@ SecureLinkSchema.statics.createSecureLink = async function(
 
 SecureLinkSchema.statics.validateLinkToken = async function(token: string): Promise<ISecureLink | null> {
   try {
-    // First verify JWT token
+    // Verify JWT signature and type, but let controller decide expiry semantics.
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
-    const decoded = jwt.verify(token, jwtSecret) as any;
+    const decoded = jwt.verify(token, jwtSecret, { ignoreExpiration: true }) as any;
     
     // Check if token type is correct
     if (decoded.type !== 'secure_upload') {
@@ -150,8 +171,7 @@ SecureLinkSchema.statics.validateLinkToken = async function(token: string): Prom
     
     // Find the secure link in database
     const secureLink = await this.findOne({
-      link_token: token,
-      expires_at: { $gt: new Date() }
+      link_token: token
     }).populate('lawyer_id', 'first_name last_name email')
      .populate('client_id', 'first_name last_name email');
     
