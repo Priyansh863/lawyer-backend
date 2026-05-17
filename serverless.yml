@@ -1,0 +1,35 @@
+service: amour #Name of your App
+
+provider:
+  name: aws
+  runtime: nodejs18.x # Node JS version
+  memorySize: 512
+  timeout: 30
+  stage: ${opt:stage, 'development'} # serverless deploy --stage development/production --aws-profile <profile_name>
+  environment:
+    NODE_ENV: ${opt:stage, self:provider.stage, 'development'}
+  region: us-east-1 # AWS region
+
+plugins:
+  - serverless-plugin-typescript
+
+functions:
+  api:
+    handler: src/App.handler
+    events:
+      - http: ANY {proxy+}
+      - http: ANY /
+package:
+  include:
+    - src/**/*.ejs
+
+  exclude:
+    - git/**
+    - node_modules/@types/**
+    - node_modules/eslint**
+    - node_modules/nodemon/**
+    - node_modules/prettier/**
+    - node_modules/ts-node/**
+    - node_modules/typescript/**
+    - node_modules/serverless-plugin-typescript/**
+    - node_modules/husky/**
