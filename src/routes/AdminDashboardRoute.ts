@@ -1,5 +1,6 @@
 import { Router } from "express";
 import AdminDashboardController from "../controllers/AdminDashboardController";
+import AdminDocumentPermissionController from "../controllers/AdminDocumentPermissionController";
 import { authenticateToken } from "../middleware/auth";
 
 const router = Router();
@@ -38,5 +39,13 @@ router.put('/content/:contentId/status', authenticateToken, AdminDashboardContro
 // Admin profile routes
 router.get('/profile', authenticateToken, AdminDashboardController.getAdminProfile);
 router.put('/profile', authenticateToken, AdminDashboardController.updateAdminProfile);
+
+// Document permission management
+router.get('/documents', authenticateToken, AdminDocumentPermissionController.listDocuments);
+router.get('/documents/:id/access', authenticateToken, AdminDocumentPermissionController.getDocumentAccess);
+router.post('/documents/:id/access/grant', authenticateToken, AdminDocumentPermissionController.grantAccess);
+router.post('/documents/:id/access/revoke', authenticateToken, AdminDocumentPermissionController.revokeAccess);
+router.patch('/documents/:id/privacy', authenticateToken, AdminDocumentPermissionController.updatePrivacy);
+router.get('/documents/:id/access-check', authenticateToken, AdminDocumentPermissionController.accessCheck);
 
 export default router;

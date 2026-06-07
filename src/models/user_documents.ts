@@ -1,10 +1,14 @@
 import mongoose, { Schema, Document } from "mongoose";
 
-// Document privacy levels
+// Document privacy: public (any authenticated user) | private (owner + shared_with)
 export enum DocumentPrivacy {
   PUBLIC = 'public',
-  PRIVATE = 'private', // Visible to selected users only
-  FULLY_PRIVATE = 'fully_private' // Only uploader can view
+  PRIVATE = 'private',
+}
+
+export enum DocumentPrivacyLevel {
+  PUBLIC = 'PUBLIC',
+  PRIVATE_SHARED = 'PRIVATE_SHARED',
 }
 
 // Document types
@@ -37,6 +41,7 @@ export interface IUserDocument extends Document {
   link?: string;
   file_base64?: string;
   privacy: DocumentPrivacy;
+  privacy_level?: DocumentPrivacyLevel;
   document_type: DocumentType;
   case_id?: mongoose.Types.ObjectId; // Reference to associated case
   file_size?: number;
@@ -79,6 +84,12 @@ const UserDocumentSchema: Schema = new Schema(
       required: true,
       default: DocumentPrivacy.PRIVATE,
       index: true
+    },
+    privacy_level: {
+      type: String,
+      enum: Object.values(DocumentPrivacyLevel),
+      default: DocumentPrivacyLevel.PRIVATE_SHARED,
+      index: true,
     },
     document_type: {
       type: String,
@@ -127,6 +138,8 @@ const UserDocumentSchema: Schema = new Schema(
 
 // Index for efficient queries
 UserDocumentSchema.index({ uploaded_by: 1, privacy: 1 });
+UserDocumentSchema.index({ uploaded_by: 1, created_at: -1 });
+UserDocumentSchema.index({ uploaded_by: 1, privacy_level: 1, created_at: -1 });
 UserDocumentSchema.index({ shared_with: 1 });
 UserDocumentSchema.index({ created_at: -1 });
 

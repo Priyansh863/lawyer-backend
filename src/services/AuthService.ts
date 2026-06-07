@@ -41,10 +41,10 @@ class AuthServices {
     const { email, password, pcId } = data;
     const query = { email: email.toLowerCase() };
     console.log("Login data:>>>>>>>>>>>>>>>", data);
-    
+
     // First check if user exists
     const userInfo = await User.findOne(query);
-    
+
     if (!userInfo) {
       this.response = {
         success: false,
@@ -90,7 +90,7 @@ class AuthServices {
       // PC Login Validation: If pcId is provided, validate it against saved pcId
       if (pcId && pcId.trim() !== '') {
         // This is a PC login attempt - validate PC ID and license status
-        
+
         // Check 1: If pcLicenseStatus is RESET, block login
         if (userInfo.pcLicenseStatus === 'RESET') {
           this.response = {
@@ -99,7 +99,7 @@ class AuthServices {
           };
           return this.response;
         }
-        
+
         // Check 2: If user doesn't have a saved PC ID, block login
         const savedPcId = userInfo.pcId;
         if (!savedPcId || savedPcId.trim() === '') {
@@ -109,7 +109,7 @@ class AuthServices {
           };
           return this.response;
         }
-        
+
         // Check 3: Compare provided pcId with saved pcId
         if (savedPcId.trim() !== pcId.trim()) {
           // PC ID doesn't match - block login
@@ -119,14 +119,14 @@ class AuthServices {
           };
           return this.response;
         }
-        
+
         // All checks passed - PC ID matches and license is active
         console.log("PC login validated successfully for user:", email);
       } else {
         // No pcId provided - this is a website login, proceed normally
         console.log("Website login for user:", email);
       }
-      
+
       // Generate a JWT token
       const dbData = await dbConfig.secretManagerConnection();
       const token = jwt.sign(
@@ -134,7 +134,7 @@ class AuthServices {
         dbData.jwtSecretKey as string,
         { expiresIn: "1y" }
       );
-      
+
       const userData = await User.findOne(query).select("-password");
       return { success: true, message: "login_successful", data: { userData, token } };
     } else {
@@ -143,7 +143,7 @@ class AuthServices {
         message: "credentials_not_match",
       };
     }
-    
+
     return this.response;
   }
 
@@ -156,7 +156,7 @@ class AuthServices {
     const query = { email: email.toLowerCase() };
 
     console.log("Admin Login data:>>>>>>>>>>>>>>>", query);
-    
+
     // Find user
     const userInfo = await User.findOne(query);
     console.log("Admin Login userInfo:>>>>>>>>>>>>>>>", userInfo);
@@ -285,7 +285,7 @@ class AuthServices {
    */
   async sendSignupOtp(email: string) {
     const user = await User.findOne({ email: email.toLowerCase() });
-    
+
     if (!user) {
       this.response = {
         success: false,
@@ -310,11 +310,11 @@ class AuthServices {
       // Update user with new OTP
       await User.updateOne(
         { email: email.toLowerCase() },
-        { 
-          $set: { 
+        {
+          $set: {
             otp: encryptedOtp,
-            otp_expires: otpExpires 
-          } 
+            otp_expires: otpExpires
+          }
         }
       );
 
@@ -402,13 +402,13 @@ class AuthServices {
       // Update user as verified and clear OTP
       const updatedUser = await User.findOneAndUpdate(
         { email: email.toLowerCase() },
-        { 
-          $set: { 
+        {
+          $set: {
             is_verified: 1,
             is_active: 1,
             otp: null,
-            otp_expires: null 
-          } 
+            otp_expires: null
+          }
         },
         { new: true }
       ).select('-password -otp -otp_expires');
@@ -485,23 +485,23 @@ class AuthServices {
           email,
           type: "forgot-password-otp",
         });
-        
+
         const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
         const encryptedOtp = enc.Base64.stringify(
           HmacSHA256(otp?.toString(), dbData.cryptoKey)
         );
-        
+
         // Store OTP in user record for verification
         await User.updateOne(
           { email: email.toLowerCase() },
-          { 
-            $set: { 
+          {
+            $set: {
               otp: encryptedOtp,
               otp_expires: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
             }
           }
         );
-        
+
         const info = {
           encOtp: encryptedOtp,
           otp: otp, // Include OTP for development (since SendGrid is not working)
@@ -509,7 +509,7 @@ class AuthServices {
           otp_expires: new Date(Date.now() + 10 * 60 * 1000),
           message: `Your password reset OTP is: ${otp}. This OTP will expire in 10 minutes.`
         };
-        
+
         this.response = {
           success: true,
           message: "otp_sent_successfully",
@@ -731,7 +731,7 @@ class AuthServices {
           if (checkSocialIdExists && checkSocialIdExists.is_active) {
             const user = checkSocialIdExists;
             const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, dbData.jwtSecretKey as string,
-               { expiresIn: "1y" });
+              { expiresIn: "1y" });
             const returnOp = {
               status: true,
               statusCode: 200,
@@ -920,19 +920,19 @@ class AuthServices {
    */
   async validateToken(data: { token: string; tone?: string }) {
     const { token, tone } = data;
-    
+
     try {
       const dbData = await dbConfig.secretManagerConnection();
       console.log("----------oooooooooooooooooo:");
-      
-      console.log("Token received:",  dbData.jwtSecretKey);
+
+      console.log("Token received:", dbData.jwtSecretKey);
       // Verify and decode the JWT token
       const decoded = jwt.verify(token, dbData.jwtSecretKey) as any;
-      
+
       // Check if token has expired
       const currentTime = Math.floor(Date.now() / 1000);
       const isExpired = decoded.exp < currentTime;
-      
+
       if (isExpired) {
         return {
           success: false,
@@ -1010,7 +1010,7 @@ class AuthServices {
 
       // Get database configuration for password hashing
       const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
-      
+
       // Hash the password
       const hashedPassword = enc.Base64.stringify(
         HmacSHA256(client_password, dbData.cryptoKey)
@@ -1035,10 +1035,10 @@ class AuthServices {
 
       // Generate JWT token for the new client
       const token = jwt.sign(
-        { 
-          _id: savedClient._id, 
-          email: savedClient.email, 
-          account_type: savedClient.account_type 
+        {
+          _id: savedClient._id,
+          email: savedClient.email,
+          account_type: savedClient.account_type
         },
         dbData.jwtSecretKey as string,
         { expiresIn: "1y" }

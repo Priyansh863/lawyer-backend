@@ -5,6 +5,22 @@ export interface IChat extends Document {
   client_id: mongoose.Types.ObjectId;
   lastMessage?: mongoose.Types.ObjectId;
   consultation_status: 'pending' | 'active' | 'ended' | 'auto_ended';
+  billing_type?: 'free' | 'paid';
+  chat_rate?: number; // per minute
+  currency?: string;
+  paid_session?: {
+    state: 'not_started' | 'running' | 'paused' | 'ended' | 'auto_ended';
+    started_by_lawyer?: boolean;
+    started_by_client?: boolean;
+    started_at?: Date | null;
+    ended_at?: Date | null;
+    expires_at?: Date | null;
+    session_duration_seconds?: number;
+    paused_by?: { lawyer: boolean; client: boolean };
+    total_billed_seconds?: number;
+    total_amount?: number;
+    last_state_change_at?: Date | null;
+  };
   consultation_started_by: mongoose.Types.ObjectId[];
   consultation_ended_by: mongoose.Types.ObjectId[];
   consultation_started_at?: Date | null;
@@ -40,6 +56,40 @@ const ChatSchema: Schema = new Schema({
     enum: ['pending', 'active', 'ended', 'auto_ended'],
     default: 'pending',
     index: true
+  },
+  billing_type: {
+    type: String,
+    enum: ['free', 'paid'],
+    default: 'free',
+    index: true,
+  },
+  chat_rate: {
+    type: Number,
+    default: 0,
+  },
+  currency: {
+    type: String,
+    default: 'USD',
+  },
+  paid_session: {
+    state: {
+      type: String,
+      enum: ['not_started', 'running', 'paused', 'ended', 'auto_ended'],
+      default: 'not_started',
+    },
+    started_at: { type: Date, default: null },
+    ended_at: { type: Date, default: null },
+    expires_at: { type: Date, default: null },
+    session_duration_seconds: { type: Number, default: 0 },
+    paused_by: {
+      lawyer: { type: Boolean, default: false },
+      client: { type: Boolean, default: false },
+    },
+    started_by_lawyer: { type: Boolean, default: false },
+    started_by_client: { type: Boolean, default: false },
+    total_billed_seconds: { type: Number, default: 0 },
+    total_amount: { type: Number, default: 0 },
+    last_state_change_at: { type: Date, default: null },
   },
   consultation_started_by: [{
     type: Schema.Types.ObjectId,

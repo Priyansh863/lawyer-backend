@@ -35,7 +35,7 @@ let socketService: SocketService;
 app.use(cors({
   origin: "*", // Allow all origins for development; restrict in production
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "auth", "x-access-token"],
   credentials: true, // Set to true if you need to allow cookies or HTTP authentication
 }));
 const port = envConfig.port;

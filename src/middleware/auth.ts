@@ -10,31 +10,29 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
+function extractBearerToken(req: Request): string | null {
+  const authHeader =
+    req.headers["auth"] ||
+    req.headers["authorization"] ||
+    req.headers["x-access-token"];
+  if (!authHeader || typeof authHeader !== "string") return null;
+  const trimmed = authHeader.trim();
+  if (trimmed.toLowerCase().startsWith("bearer ")) {
+    return trimmed.slice(7).trim() || null;
+  }
+  return trimmed || null;
+}
+
 export const authenticateToken = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    // Get authorization header
-    const authHeader = req.headers["auth"] || req.headers["authorization"];
-
-    // Check if authorization header is present
-    if (!authHeader || typeof authHeader !== 'string') {
-      console.log("No authorization header provided");
-      return res.status(401).json({
-        success: false,
-        message: "No authorization header provided",
-        error: "no-auth-header"
-      });
-    }
-
-    // Extract token from authorization header
-    const token = authHeader.split(" ")[1];
+    const token = extractBearerToken(req);
 
     // Check if token is present and valid
     if (!token || token === "null" || token === "undefined") {
-      console.log("No valid token format provided");
       return res.status(401).json({
         success: false,
         message: "No valid token format provided",
@@ -65,7 +63,9 @@ export const authenticateToken = async (
     // Move to next middleware
     next();
   } catch (error) {
-    console.log("Error in verifying auth token:", error);
+    if (process.env.NODE_ENV !== "production") {
+      console.debug("Error in verifying auth token:", error);
+    }
 
     // Only report session expiry when the JWT is actually expired
     if (error && typeof error === "object" && (error as any).name === "TokenExpiredError") {

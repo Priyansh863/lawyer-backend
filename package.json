@@ -9,7 +9,9 @@
     "start:dev": "export NODE_ENV=development&& nodemon ./index.ts",
     "start:prod": "export NODE_ENV=production&& nodemon ./index.ts",
     "lint": "eslint . --ext .ts",
-    "format": "eslint src/**/*.ts --fix"
+    "format": "eslint src/**/*.ts --fix",
+    "migrate:privacy-two-levels": "npx ts-node src/migrations/20260518_privacy_two_levels.ts",
+    "docs:document-access-pdf": "node scripts/generate-doc-access-pdf.js"
   },
   "author": "",
   "license": "ISC",
@@ -62,6 +64,7 @@
     "@types/express": "^5.0.3",
     "@types/stripe": "^8.0.416",
     "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "puppeteer": "^23.11.1",
     "serverless-plugin-typescript": "^2.1.5",
     "typescript": "^4.9.5"
   }

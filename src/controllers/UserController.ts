@@ -1,6 +1,6 @@
 import UserService from '../services/UserService';
 import { Request, Response } from 'express';
-import {User} from "../models/user";
+import { User } from "../models/user";
 import Blog from "../models/blog";
 import Case from "../models/case";
 import bcrypt from 'bcrypt';
@@ -11,7 +11,7 @@ import { sendRegistrationEmail, sendVerificationSuccessEmail } from '../utils/em
 class UserController {
   static async createUser(req: Request, res: Response) {
     try {
-      const {  email, account_type } = req.body;
+      const { email, account_type } = req.body;
       // Check if user already exists
       const existingUser = await User.findOne({ email });
       if (existingUser) {
@@ -119,7 +119,7 @@ class UserController {
       }
 
       const updatedUser = await UserService.updateUser(userId, { profile_image: imageUrl });
-      
+
       if (!updatedUser.success) {
         return res.status(404).json(updatedUser);
       }
@@ -186,7 +186,7 @@ class UserController {
         limit?: string;
       };
 
-      console.log("converting page and limit to numbers >>>",status);
+      console.log("converting page and limit to numbers >>>", status);
       const pageNumber = Number(page);
       const pageLimit = Number(limit);
 
@@ -218,9 +218,9 @@ class UserController {
       if (!role || (role !== "client" && role !== "lawyer")) {
         return res.status(403).json({ success: false, message: "Access denied" });
       }
-      if(role === "client"){
+      if (role === "client") {
         role = "lawyer"; // For clients, we fetch lawyers
-      }else if(role === "lawyer"){
+      } else if (role === "lawyer") {
         role = "client"; // For lawyers, we fetch clients
       }
 
@@ -270,16 +270,16 @@ class UserController {
         status
       } = req.body;
 
-     
+
 
       let clientId = existing_client_id;
 
       // Create new client if needed
       if (client_option === 'new') {
         if (!client_first_name || !client_last_name || !client_email || !client_password) {
-          return res.status(400).json({ 
-            success: false, 
-            message: "Missing required client fields for new client creation" 
+          return res.status(400).json({
+            success: false,
+            message: "Missing required client fields for new client creation"
           });
         }
 
@@ -303,9 +303,9 @@ class UserController {
       }
 
       if (!clientId) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Client ID is required" 
+        return res.status(400).json({
+          success: false,
+          message: "Client ID is required"
         });
       }
 
@@ -324,7 +324,7 @@ class UserController {
         court_type,
         client_id: clientId,
         lawyer_id: lawyer_id || userId,
-        status: status || 'open',
+        status: status || 'pending',
         priority: priority || 'medium',
         est_duration: est_duration || expected_duration || '',
         notes: notes || '',
@@ -332,7 +332,7 @@ class UserController {
         important_dates: [],
         documents: [],
         status_history: [{
-          status: status || 'open',
+          status: status || 'pending',
           changed_at: new Date(),
           changed_by: userId,
           notes: 'Case created'
@@ -348,7 +348,7 @@ class UserController {
           newCase,
           clientId
         );
-        
+
         console.log('Notified lawyers about new case');
 
         // Also notify the specific assigned lawyer
@@ -386,9 +386,9 @@ class UserController {
       return res.status(201).json({ success: true, case: newCase });
     } catch (error) {
       console.error("Error creating case:", error);
-      return res.status(500).json({ 
-        success: false, 
-        message: error.message || "Internal server error" 
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Internal server error"
       });
     }
   }
@@ -448,8 +448,8 @@ class UserController {
   }
 
   static async updateBlog(req: Request, res: Response): Promise<void> {
-    console.log(req.body,"<<<<<<<<<<<<updateBlog");
-    
+    console.log(req.body, "<<<<<<<<<<<<updateBlog");
+
     try {
       const id = req.params.id;
       const updates = req.body;
@@ -481,7 +481,7 @@ class UserController {
       const { notes } = req.body;
       const lawyer_id = (req as any).user._id;
       const lawyer = (req as any).user;
-      
+
       // Verify the requester is a lawyer
       if (lawyer.account_type !== 'lawyer') {
         return res.status(403).json({
@@ -489,7 +489,7 @@ class UserController {
           message: "Only lawyers can update client notes"
         });
       }
-      
+
       // Find and update the client
       const client = await User.findById(clientId);
       if (!client || client.account_type !== 'client') {
@@ -498,11 +498,11 @@ class UserController {
           message: "Client not found"
         });
       }
-      
+
       // Update notes
       client.notes = notes || '';
       await client.save();
-      
+
       return res.status(200).json({
         success: true,
         message: "Client notes updated successfully",
@@ -512,7 +512,7 @@ class UserController {
           updated_at: client.updated_at
         }
       });
-      
+
     } catch (error: any) {
       console.error('Error updating client notes:', error);
       return res.status(500).json({
@@ -530,7 +530,7 @@ class UserController {
     try {
       const { clientId } = req.params;
       const lawyer = (req as any).user;
-      
+
       // Verify the requester is a lawyer
       if (lawyer.account_type !== 'lawyer') {
         return res.status(403).json({
@@ -538,7 +538,7 @@ class UserController {
           message: "Only lawyers can view client notes"
         });
       }
-      
+
       // Find the client
       const client = await User.findById(clientId).select('notes first_name last_name email');
       if (!client || client.account_type !== 'client') {
@@ -547,7 +547,7 @@ class UserController {
           message: "Client not found"
         });
       }
-      
+
       return res.status(200).json({
         success: true,
         data: {
@@ -557,7 +557,7 @@ class UserController {
           notes: client.notes || ''
         }
       });
-      
+
     } catch (error: any) {
       console.error('Error getting client notes:', error);
       return res.status(500).json({
@@ -570,24 +570,24 @@ class UserController {
   /**
  * Get all lawyers for sharing documents
  */
-static async getLawyers(req: Request, res: Response) {
-  try {
-    const lawyers = await User.find(
-      { account_type: 'lawyer' }
-    ).sort({ first_name: 1 });
+  static async getLawyers(req: Request, res: Response) {
+    try {
+      const lawyers = await User.find(
+        { account_type: 'lawyer' }
+      ).sort({ first_name: 1 });
 
-    res.json({
-      success: true,
-      data: lawyers
-    });
-  } catch (error: any) {
-    console.error('Error fetching lawyers:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch lawyers'
-    });
+      res.json({
+        success: true,
+        data: lawyers
+      });
+    } catch (error: any) {
+      console.error('Error fetching lawyers:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch lawyers'
+      });
+    }
   }
-}
 
   /**
    * Get all clients for sharing documents (lawyer only)
@@ -595,17 +595,23 @@ static async getLawyers(req: Request, res: Response) {
   static async getClientsList(req: Request, res: Response) {
     try {
       const lawyer = (req as any).user;
-      
+      if (!lawyer?.userId || lawyer.role !== "lawyer") {
+        return res.status(403).json({
+          success: false,
+          message: "Lawyer access required",
+        });
+      }
 
-
+      const clientIds = await Case.distinct("client_id", { lawyer_id: lawyer.userId });
       const clients = await User.find(
-        { account_type: 'client' },
-        'first_name last_name email account_type'
+        { _id: { $in: clientIds }, account_type: "client" },
+        "first_name last_name email account_type"
       ).sort({ first_name: 1 });
 
-      res.json({
+      return res.status(200).json({
         success: true,
-        clients: clients
+        clients,
+        data: clients,
       });
     } catch (error: any) {
       console.error('Error fetching clients:', error);
@@ -697,7 +703,7 @@ static async getLawyers(req: Request, res: Response) {
       }
 
       // Find verified user
-      const user = await User.findOne({ 
+      const user = await User.findOne({
         email: email.toLowerCase(),
         is_verified: 1
       });
@@ -768,7 +774,7 @@ static async getLawyers(req: Request, res: Response) {
     try {
       // Get user ID from authenticated request
       const userId = (req as any).user?.userId || (req as any).id;
-      
+
       if (!userId) {
         return res.status(401).json({
           success: false,
@@ -787,7 +793,7 @@ static async getLawyers(req: Request, res: Response) {
       }
 
       // Check if PC ID is already used by another user
-      const existingUser = await User.findOne({ 
+      const existingUser = await User.findOne({
         pcId: pcId.trim(),
         _id: { $ne: userId } // Exclude current user
       });
@@ -802,7 +808,7 @@ static async getLawyers(req: Request, res: Response) {
       // Update user's PC ID and set license status to ACTIVE
       const updatedUser = await User.findByIdAndUpdate(
         userId,
-        { 
+        {
           pcId: pcId.trim(),
           pcLicenseStatus: 'ACTIVE',
           updated_at: new Date()
@@ -844,7 +850,7 @@ static async getLawyers(req: Request, res: Response) {
     try {
       // Get user ID from authenticated request
       const userId = (req as any).user?.userId || (req as any).id;
-      
+
       if (!userId) {
         return res.status(401).json({
           success: false,
@@ -855,7 +861,7 @@ static async getLawyers(req: Request, res: Response) {
       // Reset PC ID and set license status to RESET
       const updatedUser = await User.findByIdAndUpdate(
         userId,
-        { 
+        {
           pcId: null,
           pcLicenseStatus: 'RESET',
           updated_at: new Date()

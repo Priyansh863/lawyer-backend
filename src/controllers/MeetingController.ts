@@ -50,9 +50,9 @@ export default class MeetingController {
    */
   static async createMeetingRequest(req: Request, res: Response) {
     try {
-      const { 
-        clientId, 
-        lawyerId, 
+      const {
+        clientId,
+        lawyerId,
         meetingLink,
         meeting_title,
         meeting_description,
@@ -63,7 +63,7 @@ export default class MeetingController {
         custom_fee = false,
         meeting_type = 'video'
       } = req.body;
-      
+
       const userId = (req as any).user?.userId || (req as any).user?._id;
 
       // Validate required fields
@@ -99,8 +99,8 @@ export default class MeetingController {
         actualRate = hourly_rate;
       } else {
         // Use lawyer's default rate based on consultation type
-        actualRate = consultation_type === 'video' 
-          ? (lawyer.video_rate || lawyer.charges || 0) 
+        actualRate = consultation_type === 'video'
+          ? (lawyer.video_rate || lawyer.charges || 0)
           : (lawyer.charges || 0);
       }
 
@@ -124,7 +124,7 @@ export default class MeetingController {
       // Determine meeting status based on who creates it
       let status = EMeetingStatus.PENDING_APPROVAL;
       let approval_date = null;
-      
+
       // If lawyer creates the meeting, it's auto-approved
       if (user.account_type === 'lawyer') {
         // Lawyer can create meetings with any client
@@ -136,7 +136,7 @@ export default class MeetingController {
         // Client can create meetings with any lawyer
         status = EMeetingStatus.PENDING_APPROVAL;
       }
-     
+
 
       // Create the meeting request
       const meeting = await Meeting.create({
@@ -167,7 +167,7 @@ export default class MeetingController {
           try {
             // Deduct tokens from client's balance
             const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, actualRate);
-            
+
             // Create transaction record
             await TokenTransaction.create({
               user_id: clientId,
@@ -255,7 +255,7 @@ export default class MeetingController {
         console.error('Failed to send meeting request notifications:', notificationError);
       }
 
-      const message = status === EMeetingStatus.APPROVED 
+      const message = status === EMeetingStatus.APPROVED
         ? (tokenInfo ? "Meeting created and approved successfully. Tokens deducted." : "Meeting created and approved successfully")
         : "Meeting request created successfully and sent for approval";
 
@@ -321,7 +321,7 @@ export default class MeetingController {
         });
       }
 
-    
+
 
       // Get lawyer info for token deduction
       const lawyer = await User.findById(meeting.lawyer_id).select('charges video_rate first_name last_name');
@@ -335,7 +335,7 @@ export default class MeetingController {
       // Check if client has sufficient tokens before approving
       const tokensRequired = meeting.hourly_rate || 0;
       let tokenInfo = null;
-      
+
       if (tokensRequired > 0) {
         const clientTokenBalance = await UserTokenBalance.findOne({ user_id: meeting.client_id });
         if (!clientTokenBalance || clientTokenBalance.current_balance < tokensRequired) {
@@ -350,7 +350,7 @@ export default class MeetingController {
         // Deduct tokens from client's balance
         try {
           const updatedBalance = await (UserTokenBalance as any).useTokens(meeting.client_id.toString(), tokensRequired);
-          
+
           // Create transaction record
           await TokenTransaction.create({
             user_id: meeting.client_id,
@@ -396,7 +396,7 @@ export default class MeetingController {
         },
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
-       .populate('client_id', 'first_name last_name email account_type');
+        .populate('client_id', 'first_name last_name email account_type');
 
       // Send notification for video consultation approval
       try {
@@ -461,7 +461,7 @@ export default class MeetingController {
       // Update meeting to rejected status
       const updatedMeeting = await Meeting.findByIdAndUpdate(
         meetingId,
-        { 
+        {
           status: EMeetingStatus.REJECTED,
           rejection_reason: reason,
           updated_by: lawyerId,
@@ -469,7 +469,7 @@ export default class MeetingController {
         },
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
-       .populate('client_id', 'first_name last_name email account_type');
+        .populate('client_id', 'first_name last_name email account_type');
 
       // Send notification for meeting rejection
       try {
@@ -545,11 +545,11 @@ export default class MeetingController {
    */
   static async listMeetings(req: Request, res: Response) {
     try {
-      console.log("listMeetings",req.body,(req as any).user);
+      console.log("listMeetings", req.body, (req as any).user);
       const user_id = (req as any).user.userId;
       const { status } = req.query;
 
-      console.log(user_id,"user_iduser_iduser_iduser_iduser_iduser_id");
+      console.log(user_id, "user_iduser_iduser_iduser_iduser_iduser_id");
 
       let query: any = {
         $or: [
@@ -599,7 +599,7 @@ export default class MeetingController {
           { client_id: user_id }
         ]
       }).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
-       .populate('client_id', 'first_name last_name email account_type');
+        .populate('client_id', 'first_name last_name email account_type');
 
       if (!meeting) {
         return res.status(404).json({
@@ -667,21 +667,21 @@ export default class MeetingController {
         });
       }
 
- 
+
 
       const updatedMeeting = await Meeting.findByIdAndUpdate(
         meetingId,
         { status },
         { new: true }
       ).populate('lawyer_id', 'first_name last_name email account_type charges video_rate')
-       .populate('client_id', 'first_name last_name email account_type');
+        .populate('client_id', 'first_name last_name email account_type');
 
       // Send notifications for meeting status changes
       try {
         if (status === EMeetingStatus.ACTIVE) {
           // Notify both participants that meeting has started
-          const otherUserId = updatedMeeting.client_id._id.toString() === user_id.toString() 
-            ? updatedMeeting.lawyer_id._id 
+          const otherUserId = updatedMeeting.client_id._id.toString() === user_id.toString()
+            ? updatedMeeting.lawyer_id._id
             : updatedMeeting.client_id._id;
 
           await NotificationService.createNotification({
@@ -710,8 +710,8 @@ export default class MeetingController {
           });
         } else if (status === EMeetingStatus.CANCELLED) {
           // Notify the other participant about cancellation
-          const otherUserId = updatedMeeting.client_id._id.toString() === user_id.toString() 
-            ? updatedMeeting.lawyer_id._id 
+          const otherUserId = updatedMeeting.client_id._id.toString() === user_id.toString()
+            ? updatedMeeting.lawyer_id._id
             : updatedMeeting.client_id._id;
 
           await NotificationService.createNotification({
@@ -808,8 +808,8 @@ export default class MeetingController {
           newRate = updateData.hourly_rate;
         } else if (!updateData.custom_fee) {
           // Use appropriate rate based on consultation type
-          newRate = newConsultationType === 'video' 
-            ? (lawyer.video_rate || lawyer.charges || 0) 
+          newRate = newConsultationType === 'video'
+            ? (lawyer.video_rate || lawyer.charges || 0)
             : (lawyer.charges || 0);
         } else {
           newRate = meeting.hourly_rate; // Keep existing rate
@@ -852,8 +852,8 @@ export default class MeetingController {
 
       // Send notification for meeting updates
       try {
-        const otherUserId = populatedMeeting.client_id._id.toString() === user_id.toString() 
-          ? populatedMeeting.lawyer_id._id 
+        const otherUserId = populatedMeeting.client_id._id.toString() === user_id.toString()
+          ? populatedMeeting.lawyer_id._id
           : populatedMeeting.client_id._id;
 
         await NotificationService.createNotification({

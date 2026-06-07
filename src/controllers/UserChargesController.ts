@@ -41,7 +41,7 @@ export default class UserChargesController {
 
       // Prepare update object
       const updateData: any = {};
-      
+
       if (charges !== undefined && charges !== null) {
         if (charges < 0) {
           return res.status(400).json({
@@ -158,6 +158,7 @@ export default class UserChargesController {
         success: true,
         lawyers: lawyers.map(lawyer => ({
           _id: lawyer._id,
+          account_type: "lawyer" as const,
           first_name: lawyer.first_name,
           last_name: lawyer.last_name,
           email: lawyer.email,
@@ -305,7 +306,7 @@ export default class UserChargesController {
       // Use tokens from client's balance
       try {
         const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, tokensToDeduct);
-        
+
         // Create transaction record
         await TokenTransaction.create({
           user_id: clientId,
@@ -368,7 +369,7 @@ export default class UserChargesController {
 
       // Get token balance
       const tokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
-      
+
       // Get recent transactions
       const recentTransactions = await TokenTransaction.find({ user_id: clientId })
         .sort({ created_at: -1 })

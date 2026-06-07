@@ -213,8 +213,9 @@ export default class EnhancedDocumentController {
         document,
         permissions: {
           can_edit: document.uploaded_by._id.toString() === userId.toString(),
-          can_share: document.uploaded_by._id.toString() === userId.toString() && 
-                    document.privacy !== DocumentPrivacy.FULLY_PRIVATE,
+          can_share:
+            document.uploaded_by._id.toString() === userId.toString() &&
+            document.privacy === DocumentPrivacy.PRIVATE,
           can_download: true
         }
       });
@@ -339,7 +340,7 @@ export default class EnhancedDocumentController {
         permissions: {
           can_edit: doc.uploaded_by._id.toString() === userId.toString(),
           can_share: doc.uploaded_by._id.toString() === userId.toString() && 
-                    doc.privacy !== DocumentPrivacy.FULLY_PRIVATE,
+                    doc.privacy === DocumentPrivacy.PUBLIC || doc.privacy === DocumentPrivacy.PRIVATE,
           can_download: true
         }
       }));
@@ -470,10 +471,10 @@ export default class EnhancedDocumentController {
         });
       }
 
-      if (document.privacy === DocumentPrivacy.FULLY_PRIVATE) {
-        return res.status(403).json({
+      if (document.privacy !== DocumentPrivacy.PRIVATE) {
+        return res.status(400).json({
           success: false,
-          message: "Fully private documents cannot be shared"
+          message: "Sharing is only allowed when document privacy is private"
         });
       }
 
@@ -523,10 +524,16 @@ export default class EnhancedDocumentController {
         return res.status(401).json({ success: false, message: "Authentication required" });
       }
 
+      if (privacy === "fully_private") {
+        return res.status(400).json({
+          success: false,
+          message: "fully_private is no longer supported. Use private instead.",
+        });
+      }
       if (!Object.values(DocumentPrivacy).includes(privacy)) {
         return res.status(400).json({
           success: false,
-          message: "Invalid privacy setting"
+          message: 'Invalid privacy setting. Must be "public" or "private".'
         });
       }
 
@@ -557,8 +564,6 @@ export default class EnhancedDocumentController {
       if (privacy === DocumentPrivacy.PRIVATE) {
         document.shared_with = selectedUsers;
       } else if (privacy === DocumentPrivacy.PUBLIC) {
-        document.shared_with = [];
-      } else if (privacy === DocumentPrivacy.FULLY_PRIVATE) {
         document.shared_with = [];
       }
 

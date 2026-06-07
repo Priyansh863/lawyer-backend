@@ -8,6 +8,6 @@
     "outDir": "./src/dist",
     "resolveJsonModule": true
   },
-  "exclude": ["./node_modules"],
+  "exclude": ["./node_modules", "./src/controllers/ChatController_backup.ts", "./src/**/*_backup.ts"],
   "lib": ["es2015"]
 }

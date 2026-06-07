@@ -21,6 +21,8 @@ router.post("/upload-with-summary", Auth, DocumentController.uploadDocumentWithS
 
 // GET /api/v1/document/list
 router.get("/list", Auth, DocumentController.listDocuments);
+router.get("/public", Auth, DocumentController.listPublicDocuments);
+router.get("/shared-with-me", Auth, DocumentController.listSharedWithMe);
 
 // GET /api/v1/document/sync - Desktop app sync (must be before /:id route)
 router.get("/sync", Auth, DocumentController.syncDocuments);
@@ -42,6 +44,9 @@ router.get("/case/:caseId", Auth, DocumentController.getCaseDocuments);
 
 // POST /api/v1/document/generate-secure-link - Generate a secure link
 router.post("/generate-secure-link", Auth, DocumentController.generateSecureLink);
+
+// GET /api/v1/document/:documentId/access-details - Manage Access modal payload
+router.get("/:documentId/access-details", Auth, DocumentController.getDocumentAccessDetails);
 
 // GET /api/v1/document/:id/view - View document (decompressed base64)
 router.get("/:id/view", Auth, DocumentController.viewDocument);
@@ -77,7 +82,8 @@ router.post("/:documentId/share", Auth, DocumentController.shareDocument);
 // POST /api/v1/document/:documentId/unshare - Unshare document from lawyer
 router.post("/:documentId/unshare", Auth, DocumentController.unshareDocument);
 
-// PUT /api/v1/document/:documentId/privacy - Update document privacy
+// PATCH|PUT /api/v1/document/:documentId/privacy - Update document privacy
+router.patch("/:documentId/privacy", Auth, DocumentController.updateDocumentPrivacy);
 router.put("/:documentId/privacy", Auth, DocumentController.updateDocumentPrivacy);
 
 // POST /api/v1/document/lawyers-for-sharing - Get lawyers available for sharing

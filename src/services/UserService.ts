@@ -1,7 +1,7 @@
-import {User} from "../models/user";
+import { User } from "../models/user";
 import Blog from "../models/blog";
 import Case from "../models/case";
-import Helper from "../utils/helper"; 
+import Helper from "../utils/helper";
 
 interface ResponseObject {
   success: boolean;
@@ -31,7 +31,7 @@ class UserService {
   async updateUser(userId: string, updatedData: Partial<Record<string, any>>) {
     try {
       const filteredData = Object.fromEntries(
-                Object.entries(updatedData).filter(([_, value]) => value !== undefined && value !== null)
+        Object.entries(updatedData).filter(([_, value]) => value !== undefined && value !== null)
       );
 
       const user = await User.findByIdAndUpdate(userId, filteredData, {
@@ -83,7 +83,7 @@ class UserService {
    */
   async getUserList(accountType, offset, limit) {
     try {
-      const query = accountType ? { account_type: accountType,is_verified:true,is_active:true } : {};
+      const query = accountType ? { account_type: accountType, is_verified: true, is_active: true } : {};
       const users = await User.find(query).sort({ created_at: -1 });
       return users;
     } catch (error) {
@@ -110,66 +110,68 @@ class UserService {
    * Get Cases Info
    */
   async getCasesByUserRole({
-  userId,
-  role,
-  status,
-  query,
-  page = 1,
-  limit = 10,
-}: {
-  userId: string;
-  role: string;
-  status?: string;
-  query?: string;
-  page?: number;
-  limit?: number;
-}) {
-  let filter: any = {};
+    userId,
+    role,
+    status,
+    query,
+    page = 1,
+    limit = 10,
+  }: {
+    userId: string;
+    role: string;
+    status?: string;
+    query?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    let filter: any = {};
 
-  console.log("filter >>>", filter);
+    console.log("filter >>>", filter);
 
-  // Filter by user role
-  if (role === "client") {
-    filter.client_id = userId;
-  } else if (role === "lawyer") {
-    filter.lawyer_id = userId;
-  } else {
-    throw new Error("Invalid role");
+    // Filter by user role
+    if (role === "client") {
+      filter.client_id = userId;
+    } else if (role === "lawyer") {
+      filter.lawyer_id = userId;
+    } else {
+      throw new Error("Invalid role");
+    }
+
+    // Filter by status
+    if (status && status !== "all") {
+      filter.status = status;
+    }
+
+    // Text search (case-insensitive)
+    if (query) {
+      const searchRegex = new RegExp(query, "i");
+      filter.$or = [
+        { title: searchRegex },
+        { description: searchRegex },
+        { case_number: searchRegex },
+      ];
+    }
+
+    console.log("filter >>>", filter);
+
+    // Pagination
+    const skip = (page - 1) * limit;
+
+    const cases = await Case.find(filter).sort({ _id: -1 })
+      .populate('lawyer_id', 'first_name last_name profile_image')
+      .populate('client_id', 'first_name last_name profile_image');
+
+    return cases;
   }
 
-  // Filter by status
-  if (status && status !== "all") {
-    filter.status = status;
-  }
-
-  // Text search (case-insensitive)
-  if (query) {
-    const searchRegex = new RegExp(query, "i");
-    filter.$or = [
-      { title: searchRegex },
-      { description: searchRegex },
-      { case_number: searchRegex },
-    ];
-  }
-
-  console.log("filter >>>", filter);
-
-  // Pagination
-  const skip = (page - 1) * limit;
-
-  const cases = await Case.find(filter).sort({ _id: -1 })
-  .populate('lawyer_id', 'first_name last_name profile_image')
-  .populate('client_id', 'first_name last_name profile_image');
-
-  return cases;
-}
-
-async getRelatedUsers({ role, query = "", status, page = 1, limit = 10 }: {  role: string;
-  query?: string;
-  status?: string;
-  page?: number;
-  limit?: number;}){
-     const targetRole = role === "client" ? "lawyer" : "client";
+  async getRelatedUsers({ role, query = "", status, page = 1, limit = 10 }: {
+    role: string;
+    query?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const targetRole = role === "client" ? "lawyer" : "client";
 
     const filter: any = {
       account_type: targetRole,
@@ -199,12 +201,12 @@ async getRelatedUsers({ role, query = "", status, page = 1, limit = 10 }: {  rol
       .sort({ updated_at: -1 });
 
     return users;
-  
 
-}
 
-async createCase(data: CreateCaseInput) {
-  const newCase = await Case.create({
+  }
+
+  async createCase(data: CreateCaseInput) {
+    const newCase = await Case.create({
       case_number: `CASE-${Date.now()}`, // Generate a unique case number
       status: data.status,
       title: data.title,
@@ -218,9 +220,9 @@ async createCase(data: CreateCaseInput) {
     });
 
     return newCase;
-}
+  }
 
-async getUsersByType(type: "client" | "lawyer") {
+  async getUsersByType(type: "client" | "lawyer") {
     const users = await User.find({ account_type: type }).select("-password");
     return users;
   }

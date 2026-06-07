@@ -75,11 +75,30 @@ router.post('/:chatId/consultation/end', [
   param('chatId')
     .isMongoId()
     .withMessage('Invalid chat ID format'),
+  body('confirm')
+    .custom((value) => value === true)
+    .withMessage('confirm must be true'),
   body('reason')
     .optional()
-    .isIn(['manual', 'inactivity'])
+    .isIn(['manual', 'inactivity', 'auto'])
     .withMessage('Invalid end reason')
 ], ChatController.endConsultation);
+
+// Pause paid consultation (either party)
+router.post('/:chatId/consultation/pause', [
+  authenticateToken,
+  param('chatId')
+    .isMongoId()
+    .withMessage('Invalid chat ID format'),
+], ChatController.pauseConsultation);
+
+// Resume paid consultation (either party)
+router.post('/:chatId/consultation/resume', [
+  authenticateToken,
+  param('chatId')
+    .isMongoId()
+    .withMessage('Invalid chat ID format'),
+], ChatController.resumeConsultation);
 
 // Delete a chat
 router.delete('/:chatId', [

@@ -6,7 +6,7 @@ import Notification from "../models/Notification";
 import Blog from "../models/blog";
 import Post from "../models/Post";
 import { Payment } from "../models/payment";
-import Helper from "../utils/helper"; 
+import Helper from "../utils/helper";
 
 
 export default class AdminDashboardController {
@@ -15,32 +15,32 @@ export default class AdminDashboardController {
     try {
       // Get total users count
       const totalUsers = await User.countDocuments({ account_type: { $ne: 'admin' } });
-      
+
       // Get regular users (clients) count
       const regularUsers = await User.countDocuments({ account_type: 'client' });
-      
+
       // Get verified lawyers count
-      const verifiedLawyers = await User.countDocuments({ 
+      const verifiedLawyers = await User.countDocuments({
         account_type: 'lawyer',
-        is_verified: true 
+        is_verified: true
       });
-      
+
       // Get today's blog/article count
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      
+
       const blogsToday = await Blog.countDocuments({
         created_at: { $gte: today, $lt: tomorrow }
       });
-      
+
       const postsToday = await Post.countDocuments({
         created_at: { $gte: today, $lt: tomorrow }
       });
-      
+
       const totalContentToday = blogsToday + postsToday;
-      
+
       // Get total tokens transacted (using fallback value for now)
       const tokensTransacted = 1200; // Default fallback value
 
@@ -56,10 +56,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching admin dashboard stats:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to fetch dashboard statistics", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch dashboard statistics",
+        error: error.message
       });
     }
   }
@@ -93,10 +93,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching user roles distribution:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to fetch user roles distribution", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch user roles distribution",
+        error: error.message
       });
     }
   }
@@ -115,7 +115,7 @@ export default class AdminDashboardController {
       const formattedActivity = recentNotifications.map(notification => {
         const user = notification.userId as any;
         const creator = notification.createdBy as any;
-        
+
         return {
           id: notification._id,
           title: notification.title,
@@ -139,10 +139,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching recent activity:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to fetch recent activity", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch recent activity",
+        error: error.message
       });
     }
   }
@@ -151,7 +151,7 @@ export default class AdminDashboardController {
   static async getAllNotifications(req: Request, res: Response) {
     try {
       const { page = 1, limit = 20, type = 'all' } = req.query;
-      
+
       const query: any = {};
       if (type !== 'all') {
         query.type = type;
@@ -169,7 +169,7 @@ export default class AdminDashboardController {
       const formattedNotifications = notifications.map(notification => {
         const user = notification.userId as any;
         const creator = notification.createdBy as any;
-        
+
         return {
           id: notification._id,
           title: notification.title,
@@ -202,10 +202,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching all notifications:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to fetch notifications", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch notifications",
+        error: error.message
       });
     }
   }
@@ -214,9 +214,9 @@ export default class AdminDashboardController {
   static async getAllUsers(req: Request, res: Response) {
     try {
       const { search = '', status = 'all', role = 'all' } = req.query;
-      
+
       const query: any = {};
-      
+
       // Search by name or email
       if (search) {
         query.$or = [
@@ -225,12 +225,12 @@ export default class AdminDashboardController {
           { email: { $regex: search, $options: 'i' } }
         ];
       }
-      
+
       // Filter by role
       if (role !== 'all') {
         query.account_type = role;
       }
-      
+
       // Filter by status (for lawyers)
       if (status !== 'all' && status === 'verified') {
         query.is_verified = true;
@@ -244,7 +244,7 @@ export default class AdminDashboardController {
 
       const formattedUsers = users.map(user => ({
         id: user._id,
-        name:  user.first_name ? `${user.first_name} ${user.last_name}` : 'N/A',
+        name: user.first_name ? `${user.first_name} ${user.last_name}` : 'N/A',
         email: user.email,
         is_active: user.is_active,
         is_verified: user.is_verified,
@@ -263,10 +263,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching users:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to fetch users", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch users",
+        error: error.message
       });
     }
   }
@@ -275,7 +275,7 @@ export default class AdminDashboardController {
   static async verifyLawyer(req: Request, res: Response) {
     try {
       const { userId } = req.params;
-      
+
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({
@@ -291,7 +291,7 @@ export default class AdminDashboardController {
         });
       }
 
-    user.is_verified = 1;
+      user.is_verified = 1;
       await user.save();
 
       // Create notification for lawyer verification
@@ -315,10 +315,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error verifying lawyer:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to verify lawyer", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to verify lawyer",
+        error: error.message
       });
     }
   }
@@ -328,7 +328,7 @@ export default class AdminDashboardController {
     try {
       const { userId } = req.params;
       const { reason = 'Verification rejected by admin' } = req.body;
-      
+
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({
@@ -368,10 +368,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error rejecting lawyer:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to reject lawyer", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to reject lawyer",
+        error: error.message
       });
     }
   }
@@ -380,7 +380,7 @@ export default class AdminDashboardController {
   static async getUserDetails(req: Request, res: Response) {
     try {
       const { userId } = req.params;
-      
+
       const user = await User.findById(userId).select('-password -otp');
       if (!user) {
         return res.status(404).json({
@@ -397,14 +397,14 @@ export default class AdminDashboardController {
 
       // Get user's activity stats based on account type
       let activityStats = {};
-      
+
       if (user.account_type === 'lawyer') {
         // For lawyers, get cases and meetings stats
         const totalCases = await Case.countDocuments({ lawyer_id: user._id });
         const activeCases = await Case.countDocuments({ lawyer_id: user._id, status: 'active' });
         const totalMeetings = await Meeting.countDocuments({ lawyer_id: user._id });
         const completedMeetings = await Meeting.countDocuments({ lawyer_id: user._id, status: 'completed' });
-        
+
         activityStats = {
           totalCases,
           activeCases,
@@ -417,7 +417,7 @@ export default class AdminDashboardController {
         const activeCases = await Case.countDocuments({ client_id: user._id, status: 'active' });
         const totalMeetings = await Meeting.countDocuments({ client_id: user._id });
         const completedMeetings = await Meeting.countDocuments({ client_id: user._id, status: 'completed' });
-        
+
         activityStats = {
           totalCases,
           activeCases,
@@ -466,10 +466,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching user details:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         message: 'Internal server error',
-        error: error.message 
+        error: error.message
       });
     }
   }
@@ -513,8 +513,8 @@ export default class AdminDashboardController {
         const notification = new Notification({
           userId: user._id,
           title: is_active === 1 ? 'Account Activated' : 'Account Deactivated',
-          message: is_active === 1 
-            ? 'Your account has been activated by an administrator' 
+          message: is_active === 1
+            ? 'Your account has been activated by an administrator'
             : 'Your account has been deactivated by an administrator',
           type: 'account_status',
           priority: 'high',
@@ -578,8 +578,8 @@ export default class AdminDashboardController {
         const notification = new Notification({
           userId: user._id,
           title: is_verified === 1 ? 'Account Verified' : 'Account Unverified',
-          message: is_verified === 1 
-            ? 'Your account has been verified by an administrator' 
+          message: is_verified === 1
+            ? 'Your account has been verified by an administrator'
             : 'Your account verification has been removed by an administrator',
           type: 'account_verification',
           priority: 'high',
@@ -608,11 +608,11 @@ export default class AdminDashboardController {
   static async getPendingLawyers(req: Request, res: Response) {
     try {
       const { search = '', status = 'pending' } = req.query;
-      
+
       const query: any = {
         account_type: 'lawyer'
       };
-      
+
       if (status !== 'all') {
         if (status === 'pending') {
           query.is_verified = 0;
@@ -620,7 +620,7 @@ export default class AdminDashboardController {
           query.is_verified = 1;
         }
       }
-      
+
       if (search) {
         query.$or = [
           { first_name: { $regex: search, $options: 'i' } },
@@ -628,11 +628,11 @@ export default class AdminDashboardController {
           { email: { $regex: search, $options: 'i' } }
         ];
       }
-      
+
       const lawyers = await User.find(query)
         .select('-password -otp')
         .sort({ created_at: -1 });
-      
+
       const formattedLawyers = lawyers.map(lawyer => ({
         id: lawyer._id,
         lawyerId: lawyer._id,
@@ -648,7 +648,7 @@ export default class AdminDashboardController {
         isProfileCompleted: lawyer.is_profile_completed,
         initials: `${lawyer.first_name?.[0] || ''}${lawyer.last_name?.[0] || ''}`
       }));
-      
+
       res.status(200).json({
         success: true,
         data: formattedLawyers,
@@ -656,10 +656,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching pending lawyers:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         message: 'Internal server error',
-        error: error.message 
+        error: error.message
       });
     }
   }
@@ -668,7 +668,7 @@ export default class AdminDashboardController {
   static async exportUsers(req: Request, res: Response) {
     try {
       const { role = 'all' } = req.query;
-      
+
       const query: any = {};
       if (role !== 'all') {
         query.account_type = role;
@@ -693,10 +693,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error exporting users:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to export users", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to export users",
+        error: error.message
       });
     }
   }
@@ -714,7 +714,7 @@ export default class AdminDashboardController {
 
       // Build filter object
       const filter: any = {};
-      
+
       if (search) {
         filter.$or = [
           { 'user.first_name': { $regex: search, $options: 'i' } },
@@ -722,11 +722,11 @@ export default class AdminDashboardController {
           { 'user.email': { $regex: search, $options: 'i' } }
         ];
       }
-      
+
       if (status) {
         filter.status = status;
       }
-      
+
       if (type) {
         filter.type = type;
       }
@@ -770,10 +770,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching transactions:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to fetch transactions", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch transactions",
+        error: error.message
       });
     }
   }
@@ -791,14 +791,14 @@ export default class AdminDashboardController {
 
       // Build filter object
       const filter: any = {};
-      
+
       if (search) {
         filter.$or = [
           { title: { $regex: search, $options: 'i' } },
           { content: { $regex: search, $options: 'i' } }
         ];
       }
-      
+
       if (status) {
         filter.status = status;
       }
@@ -862,10 +862,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error fetching content:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to fetch content", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch content",
+        error: error.message
       });
     }
   }
@@ -874,9 +874,9 @@ export default class AdminDashboardController {
   static async getAdminProfile(req: Request, res: Response) {
     try {
       const adminId = (req as any).user?.userId;
-      
+
       const admin = await User.findById(adminId).select('-password');
-      
+
 
 
       res.status(200).json({
@@ -951,7 +951,7 @@ export default class AdminDashboardController {
       }
 
       let updatedContent;
-      
+
       if (type.toLowerCase() === 'blog') {
         updatedContent = await Blog.findByIdAndUpdate(
           contentId,
@@ -985,10 +985,10 @@ export default class AdminDashboardController {
       });
     } catch (error) {
       console.error('Error updating content status:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to update content status", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to update content status",
+        error: error.message
       });
     }
   }
