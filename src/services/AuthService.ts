@@ -923,10 +923,6 @@ class AuthServices {
 
     try {
       const dbData = await dbConfig.secretManagerConnection();
-      console.log("----------oooooooooooooooooo:");
-
-      console.log("Token received:", dbData.jwtSecretKey);
-      // Verify and decode the JWT token
       const decoded = jwt.verify(token, dbData.jwtSecretKey) as any;
 
       // Check if token has expired

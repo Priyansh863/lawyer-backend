@@ -18,6 +18,14 @@ yarn-error.log*
 
 # env files
 .env*
+src/env.json
+*-firebase-adminsdk-*.json
+
+# local debug scripts (must not contain credentials)
+/check_*.ts
+/fix_*.ts
+/inspect_*.ts
+/encryptHistoricalData.ts
 
 # vercel
 .vercel

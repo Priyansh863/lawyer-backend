@@ -1,7 +1,8 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HTTPServer } from 'http';
 import jwt from 'jsonwebtoken';
-import config from '../config/envConfig';
+import dbConfig from '../config/secretManagerConfig';
+import { ISecretManagerData } from '../Interfaces/commonInterfaces';
 import ChatService from './ChatService';
 
 interface AuthenticatedSocket extends Socket {
@@ -32,17 +33,12 @@ class SocketService {
       try {
         const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
 
-        console.log("token", token);
-        
         if (!token) {
           return next(new Error('Authentication error: No token provided'));
         }
 
-        const envConfig = config();
-        console.log("envConfig", envConfig);
-        
-        const decoded = jwt.verify(token, envConfig.jwtSecretKey) as any;
-        console.log("decoded", decoded);
+        const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+        const decoded = jwt.verify(token, dbData.jwtSecretKey) as any;
         
         // Support both legacy and current JWT shapes
         socket.userId = decoded.userId || decoded._id;
@@ -50,8 +46,6 @@ class SocketService {
         
         next();
       } catch (error) {
-        console.log("error", error);
-        
         next(new Error('Authentication error: Invalid token'));
       }
     });

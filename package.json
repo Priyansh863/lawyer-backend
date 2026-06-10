@@ -8,6 +8,7 @@
     "start": "set NODE_ENV=development&& nodemon src/App.ts&& node --max-old-space-size=5120",
     "start:dev": "export NODE_ENV=development&& nodemon ./index.ts",
     "start:prod": "export NODE_ENV=production&& nodemon ./index.ts",
+    "build": "tsc --noEmit",
     "lint": "eslint . --ext .ts",
     "format": "eslint src/**/*.ts --fix",
     "migrate:privacy-two-levels": "npx ts-node src/migrations/20260518_privacy_two_levels.ts",

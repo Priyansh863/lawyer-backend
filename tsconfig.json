@@ -6,8 +6,16 @@
     "moduleResolution": "node",
     "sourceMap": true,
     "outDir": "./src/dist",
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "skipLibCheck": true
   },
-  "exclude": ["./node_modules", "./src/controllers/ChatController_backup.ts", "./src/**/*_backup.ts"],
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "./node_modules",
+    "./src/**/*_backup.ts",
+    "./src/controllers/EnhancedCaseController.ts",
+    "./src/utils/fcmNotification.ts",
+    "./src/migrations/**"
+  ],
   "lib": ["es2015"]
 }
