@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { getJwtSecret } from '../utils/jwtSecret';
 
 export type SecureLinkMode = "existing_client" | "non_customer";
 
@@ -133,8 +134,8 @@ SecureLinkSchema.statics.createSecureLink = async function(
     type: 'secure_upload'
   };
   
-  const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
-  const link_token = jwt.sign(tokenPayload, jwtSecret, { 
+  const jwtSecret = await getJwtSecret();
+  const link_token = jwt.sign(tokenPayload, jwtSecret, {
     expiresIn: `${expiresInHours}h`,
     issuer: 'lawyer-app',
     subject: 'secure-document-upload'
@@ -161,7 +162,7 @@ SecureLinkSchema.statics.createSecureLink = async function(
 SecureLinkSchema.statics.validateLinkToken = async function(token: string): Promise<ISecureLink | null> {
   try {
     // Verify JWT signature and type, but let controller decide expiry semantics.
-    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
+    const jwtSecret = await getJwtSecret();
     const decoded = jwt.verify(token, jwtSecret, { ignoreExpiration: true }) as any;
     
     // Check if token type is correct

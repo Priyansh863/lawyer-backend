@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { applyFieldEncryption } from '../utils/mongooseEncryption';
 
 export interface IMessage extends Document {
   chatId: mongoose.Types.ObjectId;
@@ -51,6 +52,8 @@ const MessageSchema: Schema = new Schema<IMessage>({
 // Index for efficient queries
 MessageSchema.index({ chatId: 1, createdAt: -1 });
 MessageSchema.index({ senderId: 1 });
+
+applyFieldEncryption(MessageSchema, ["content"]);
 
 const Message = mongoose.model<IMessage>('Message', MessageSchema);
 export default Message;

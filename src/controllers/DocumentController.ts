@@ -106,6 +106,11 @@ export default class DocumentController {
     return false;
   }
 
+  private static getAuthUserId(req: Request): string | null {
+    const id = (req as any).id || (req as any).user?.userId;
+    return id ? String(id) : null;
+  }
+
   private static canAccessDocument(userId: string | undefined, role: string | undefined, doc: any): boolean {
     if (!userId || !doc) return false;
     if (role === "admin") return true;
@@ -114,6 +119,45 @@ export default class DocumentController {
     if (DocumentController.isPublicDocument(doc)) return true;
     const privacy = DocumentController.normalizeResponsePrivacy(doc.privacy);
     if (privacy === DocumentPrivacy.PUBLIC) return true;
+    if (privacy === DocumentPrivacy.PRIVATE) {
+      return (
+        Array.isArray(doc.shared_with) &&
+        doc.shared_with.some(
+          (u: any) => (u?._id ? u._id.toString() : u?.toString?.()) === userId
+        )
+      );
+    }
+    return false;
+  }
+
+  /** Async access check including explicit DocumentPermission grant/revoke. */
+  private static async canAccessDocumentAsync(
+    userId: string | undefined,
+    role: string | undefined,
+    doc: any
+  ): Promise<boolean> {
+    if (!userId || !doc) return false;
+    if (role === "admin") return true;
+    const ownerId = DocumentController.getDocumentOwnerId(doc);
+    if (ownerId && ownerId === userId) return true;
+    if (DocumentController.isPublicDocument(doc)) return true;
+
+    const docId = doc._id;
+    const revoked = await DocumentPermission.exists({
+      document_id: docId,
+      user_id: new mongoose.Types.ObjectId(userId),
+      revoked_at: { $ne: null },
+    });
+    if (revoked) return false;
+
+    const activePerm = await DocumentPermission.exists({
+      document_id: docId,
+      user_id: new mongoose.Types.ObjectId(userId),
+      revoked_at: null,
+    });
+    if (activePerm) return true;
+
+    const privacy = DocumentController.normalizeResponsePrivacy(doc.privacy);
     if (privacy === DocumentPrivacy.PRIVATE) {
       return (
         Array.isArray(doc.shared_with) &&
@@ -284,8 +328,12 @@ export default class DocumentController {
    */
   static async uploadDocumentEnhanced(req: Request, res: Response) {
     try {
+      const user_id = DocumentController.getAuthUserId(req);
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
       const {
-        user_id,
         link,
         file_base64,
         document_name,
@@ -537,16 +585,18 @@ export default class DocumentController {
    * @param req.body.userId (string)
    */
   static async uploadDocument(req: Request, res: Response) {
-    // Save document record after upload
     try {
-      const { userId, fileUrl, fileName, privacy, file_base64 } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      console.log("re.body=======", req.body)
+      const { fileUrl, fileName, privacy, file_base64 } = req.body;
 
-      if (!userId || !fileName) {
+      if (!fileName) {
         return res.status(400).json({
           success: false,
-          message: "userId and fileName are required"
+          message: "fileName is required"
         });
       }
 
@@ -825,8 +875,12 @@ export default class DocumentController {
     session.startTransaction();
 
     try {
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
       const {
-        userId,
         fileUrl,
         file_base64,
         fileName,
@@ -984,13 +1038,17 @@ export default class DocumentController {
    */
   static async uploadDocumentWithSummary(req: Request, res: Response) {
     try {
-      const { userId, fileUrl, fileName, file_base64 } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      // Validate required fields
-      if (!userId || !fileUrl || !fileName) {
+      const { fileUrl, fileName, file_base64 } = req.body;
+
+      if (!fileUrl || !fileName) {
         return res.status(400).json({
           success: false,
-          message: "Missing required fields: userId, fileUrl, fileName"
+          message: "Missing required fields: fileUrl, fileName"
         });
       }
 
@@ -1395,7 +1453,10 @@ export default class DocumentController {
   static async getDocumentById(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const requesterId = (req as any).id;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
       const requesterRole = (req as any).role;
 
       const document = await UserDocument.findById(id)
@@ -1409,7 +1470,7 @@ export default class DocumentController {
         });
       }
 
-      if (!DocumentController.canAccessDocument(requesterId, requesterRole, document)) {
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
           message: "Access denied",
@@ -1552,7 +1613,11 @@ export default class DocumentController {
    */
   static async getAccessibleDocuments(req: Request, res: Response) {
     try {
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
       const {
         privacy,
         status,
@@ -1602,7 +1667,7 @@ export default class DocumentController {
       // Calculate pagination
       const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
-      const requesterId = (req as any).id || userId;
+      const requesterId = userId;
       const requesterRole = (req as any).role;
 
       // Get documents with pagination
@@ -1845,12 +1910,11 @@ export default class DocumentController {
       const requesterRole = (req as any).role as string | undefined;
       // Fix: Rename userId to targetUserId to prevent collision with the owner's ID
       // Some old clients might send the target as lawyerId.
-      const { targetUserId, lawyerId, userId } = req.body as {
+      const { targetUserId, lawyerId } = req.body as {
         targetUserId?: string;
         lawyerId?: string;
-        userId?: string;
       };
-      const userToRemove = targetUserId || lawyerId || userId;
+      const userToRemove = targetUserId || lawyerId;
       if (!userToRemove) {
         return res.status(400).json({ success: false, message: "targetUserId is required" });
       }
@@ -1993,9 +2057,11 @@ export default class DocumentController {
    */
   static async getLawyersForSharing(req: Request, res: Response) {
     try {
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      // Get user to check role
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({ success: false, message: "User not found" });
@@ -2034,9 +2100,11 @@ export default class DocumentController {
    */
   static async getUsersForSharing(req: Request, res: Response) {
     try {
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      // Get current user to check role
       const currentUser = await User.findById(userId);
       if (!currentUser) {
         return res.status(404).json({ success: false, message: "User not found" });
@@ -2076,9 +2144,12 @@ export default class DocumentController {
   static async getDocumentSharingDetails(req: Request, res: Response) {
     try {
       const { documentId } = req.params;
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      const requesterRole = (req as any).role;
 
-      // Find the document
       const document = await UserDocument.findById(documentId)
         .populate('uploaded_by', 'first_name last_name email account_type')
         .populate('shared_with', 'first_name last_name email account_type profile_image');
@@ -2090,12 +2161,7 @@ export default class DocumentController {
         });
       }
 
-      // Check if user has access to this document
-      const hasAccess =
-        document.uploaded_by._id.toString() === userId ||
-        document.shared_with.some((lawyer: any) => lawyer._id.toString() === userId);
-
-      if (!hasAccess) {
+      if (!(await DocumentController.canAccessDocumentAsync(userId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
           message: 'You do not have access to this document'
@@ -2687,7 +2753,10 @@ export default class DocumentController {
   static async viewDocument(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const requesterId = (req as any).id;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
       const requesterRole = (req as any).role;
 
       const document = await UserDocument.findById(id).populate('uploaded_by', '_id').populate('shared_with', '_id');
@@ -2696,7 +2765,7 @@ export default class DocumentController {
         return res.status(404).json({ success: false, message: 'Document not found' });
       }
 
-      if (!DocumentController.canAccessDocument(requesterId, requesterRole, document)) {
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
           message: "Access denied",
@@ -2737,12 +2806,15 @@ export default class DocumentController {
   static async generateSecureLink(req: Request, res: Response) {
     try {
       const { documentId, fileId } = req.body;
-      const targetId = documentId || fileId; // Frontend currently sends `fileId`
-      const requesterId = (req as any).id;
+      const targetId = documentId || fileId;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
       const requesterRole = (req as any).role;
-      
+
       if (!targetId) {
-         return res.status(400).json({ success: false, message: 'documentId or fileId is required' });
+        return res.status(400).json({ success: false, message: 'documentId or fileId is required' });
       }
 
       const document = await UserDocument.findById(targetId);
@@ -2751,7 +2823,7 @@ export default class DocumentController {
         return res.status(404).json({ success: false, message: 'Document not found' });
       }
 
-      if (!DocumentController.canAccessDocument(requesterId, requesterRole, document)) {
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
           message: "Access denied",
@@ -2781,7 +2853,10 @@ export default class DocumentController {
   static async downloadDocument(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const requesterId = (req as any).id;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
       const requesterRole = (req as any).role;
 
       const document = await UserDocument.findById(id).populate('uploaded_by', '_id').populate('shared_with', '_id');
@@ -2793,7 +2868,7 @@ export default class DocumentController {
         });
       }
 
-      if (!DocumentController.canAccessDocument(requesterId, requesterRole, document)) {
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
           message: "Access denied",

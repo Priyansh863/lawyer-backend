@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from "mongoose";
+import { applyFieldEncryption } from "../utils/mongooseEncryption";
 
 // Document privacy: public (any authenticated user) | private (owner + shared_with)
 export enum DocumentPrivacy {
@@ -184,5 +185,7 @@ UserDocumentSchema.statics.unshareDocument = function (documentId: string, lawye
     { new: true }
   );
 };
+
+applyFieldEncryption(UserDocumentSchema, ["summary", "link", "file_base64"]);
 
 export default mongoose.model<IUserDocument>("UserDocument", UserDocumentSchema);

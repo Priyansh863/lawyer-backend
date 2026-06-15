@@ -27,6 +27,10 @@ src/env.json
 /inspect_*.ts
 /encryptHistoricalData.ts
 
+# system / binary junk
+.DS_Store
+*.pkg
+
 # vercel
 .vercel
 

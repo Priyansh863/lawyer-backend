@@ -20,9 +20,10 @@ class AdminDocumentPermissionController {
       const user = await User.findById(userId).select("account_type").lean();
       isAdmin = (user as any)?.account_type?.toString?.().toLowerCase?.() === "admin";
     }
-    // Backward compatibility with existing /admin routes in this codebase:
-    // they are currently auth-protected but not strictly role-gated.
-    // Keep strict admin detection available, but do not block authenticated users here.
+    if (!isAdmin) {
+      res.status(403).json({ success: false, message: "Forbidden: admin access required" });
+      return null;
+    }
     return { userId };
   }
 

@@ -9,6 +9,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import dbConfig from '../config/secretManagerConfig';
 import { ISecretManagerData } from '../Interfaces/commonInterfaces';
+import { getJwtSecret } from '../utils/jwtSecret';
 
 // Define AuthenticatedRequest interface
 interface AuthenticatedRequest extends Request {
@@ -351,6 +352,7 @@ class SecureLinkController {
       SecureLinkController.clearAuthFailures(req, token);
 
       // Generate temporary upload token (valid for 1 hour)
+      const jwtSecret = await getJwtSecret();
       const uploadToken = jwt.sign(
         {
           link_id: secureLink._id,
@@ -364,7 +366,7 @@ class SecureLinkController {
           type: 'secure_upload_auth',
           expires_at: secureLink.expires_at
         },
-        process.env.JWT_SECRET || 'your-secret-key',
+        jwtSecret,
         { expiresIn: '1h' }
       );
 
@@ -410,7 +412,8 @@ class SecureLinkController {
       // Verify upload token
       let decoded: any;
       try {
-        decoded = jwt.verify(upload_token, process.env.JWT_SECRET || 'your-secret-key');
+        const jwtSecret = await getJwtSecret();
+        decoded = jwt.verify(upload_token, jwtSecret);
       } catch (error) {
         res.status(401).json({
           success: false,

@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
+import { applyFieldEncryption } from "../utils/mongooseEncryption";
 
 export interface ISecureLinkUpload extends Document {
   link_id: mongoose.Types.ObjectId;
@@ -42,6 +43,8 @@ const SecureLinkUploadSchema = new Schema<ISecureLinkUpload>({
 });
 
 SecureLinkUploadSchema.index({ link_id: 1, uploaded_at: -1 });
+
+applyFieldEncryption(SecureLinkUploadSchema, ["file_url"]);
 
 const SecureLinkUpload = mongoose.model<ISecureLinkUpload>(
   "SecureLinkUpload",
