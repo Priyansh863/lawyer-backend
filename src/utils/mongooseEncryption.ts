@@ -95,3 +95,7 @@ export function applyFieldEncryption(schema: Schema, fields: string[]): void {
     decryptDocFields(doc, fields);
   });
 }
+
+/** Legacy aliases used by migration scripts (e.g. encryptHistoricalData.ts). */
+export const encrypt = encryptField;
+export const decrypt = decryptField;

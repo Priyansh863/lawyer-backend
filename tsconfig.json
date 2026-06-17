@@ -12,6 +12,9 @@
   "include": ["src/**/*.ts"],
   "exclude": [
     "./node_modules",
+    "./encryptHistoricalData.ts",
+    "./check_*.ts",
+    "./inspect_*.ts",
     "./src/**/*_backup.ts",
     "./src/controllers/EnhancedCaseController.ts",
     "./src/utils/fcmNotification.ts",

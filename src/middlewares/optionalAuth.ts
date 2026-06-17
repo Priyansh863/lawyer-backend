@@ -24,11 +24,12 @@ const OptionalAuth = async (request: Request, response: Response, next: NextFunc
         request["token"] = token;
         // Also attach a normalized `user` object for consistency with other parts of the codebase.
         (request as any).user = { userId: decoded._id, role: decoded.account_type };
-        console.log(`OptionalAuth: Extracted userId=${decoded._id}, role=${decoded.account_type}`);
         next();
     } catch (error) {
         // If token is invalid, we still allow the request but without user identity
-        console.log("Optional auth error (continuing as guest):", error.message);
+        if (process.env.NODE_ENV !== "production") {
+          console.debug("Optional auth failed (continuing as guest)");
+        }
         next();
     }
 };

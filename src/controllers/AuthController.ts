@@ -10,9 +10,7 @@ import { DataFromHeader, ResponseObject } from "../Interfaces/commonInterfaces";
 
 export const login = async (req: Request, res: Response) => {
   try {
-    console.log("Login request received:", req.body);
     const response: ResponseObject = await AuthService.login(req.body);
-    console.log("Login response:", response);
     res.status(200).send(response);
   } catch (error) {
     console.error("Login error:", error);
@@ -166,7 +164,6 @@ export const validateToken = async (
  */
 export const adminLogin = async (req: Request, res: Response) => {
   try {
-    console.log("Admin Login request received:", req.body);
     const response: ResponseObject = await AuthService.adminLogin(req.body);
     res.status(200).send(response);
   } catch (error) {

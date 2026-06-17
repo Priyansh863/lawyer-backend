@@ -29,6 +29,7 @@ src/env.json
 
 # system / binary junk
 .DS_Store
+**/.DS_Store
 *.pkg
 
 # vercel
