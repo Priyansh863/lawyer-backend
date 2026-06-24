@@ -179,6 +179,17 @@ class AuthServices {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
+  /** OTP is never returned in production API responses. */
+  private buildOtpResponseData(
+    base: Record<string, unknown>,
+    otp: string
+  ): Record<string, unknown> {
+    if (process.env.NODE_ENV !== "production") {
+      return { ...base, otp };
+    }
+    return base;
+  }
+
   /**
    * Sign up with OTP
    */
@@ -247,12 +258,14 @@ class AuthServices {
         this.response = {
           success: true,
           message: "otp_sent",
-          data: {
-            email: userData.email,
-            otp_expires: otpExpires,
-            token,
-            otp: otp, // Include OTP for development (since email service may not be working)
-          },
+          data: this.buildOtpResponseData(
+            {
+              email: userData.email,
+              otp_expires: otpExpires,
+              token,
+            },
+            otp
+          ),
         };
       } else {
         this.response = {
@@ -319,12 +332,13 @@ class AuthServices {
       this.response = {
         success: true,
         message: 'otp_sent_successfully',
-        data: {
-          email: email,
-          otp_expires: otpExpires,
-          otp: otp, // Include OTP for development (since email service may not be working)
-          message: `Your verification OTP is: ${otp}. This OTP will expire in 10 minutes.`
-        }
+        data: this.buildOtpResponseData(
+          {
+            email: email,
+            otp_expires: otpExpires,
+          },
+          otp
+        ),
       };
     } catch (error) {
       console.error('Error sending OTP:', error);
@@ -492,13 +506,13 @@ class AuthServices {
           }
         );
 
-        const info = {
-          encOtp: encryptedOtp,
-          otp: otp, // Include OTP for development (since SendGrid is not working)
-          email: email,
-          otp_expires: new Date(Date.now() + 10 * 60 * 1000),
-          message: `Your password reset OTP is: ${otp}. This OTP will expire in 10 minutes.`
-        };
+        const info = this.buildOtpResponseData(
+          {
+            email: email,
+            otp_expires: new Date(Date.now() + 10 * 60 * 1000),
+          },
+          otp?.toString() || ""
+        );
 
         this.response = {
           success: true,

@@ -1,32 +1,12 @@
 import { Request, Response } from "express";
 import mongoose from "mongoose";
 import UserDocument, { DocumentPrivacyLevel } from "../models/user_documents";
-import { User } from "../models/user";
 import DocumentPermission from "../models/DocumentPermission";
 import DocumentPermissionAuditLog from "../models/DocumentPermissionAuditLog";
+import { User } from "../models/user";
+import { getAuthUserId } from "../middleware/auth";
 
 class AdminDocumentPermissionController {
-  private static async ensureAdmin(req: Request, res: Response): Promise<{ userId: string } | null> {
-    const userId = (req as any).id as string | undefined;
-    const role = (req as any).role as string | undefined;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "Unauthorized" });
-      return null;
-    }
-    const roleNormalized = (role || "").toLowerCase();
-    let isAdmin = roleNormalized === "admin";
-    if (!isAdmin) {
-      // Fallback for tokens with missing/legacy role casing.
-      const user = await User.findById(userId).select("account_type").lean();
-      isAdmin = (user as any)?.account_type?.toString?.().toLowerCase?.() === "admin";
-    }
-    if (!isAdmin) {
-      res.status(403).json({ success: false, message: "Forbidden: admin access required" });
-      return null;
-    }
-    return { userId };
-  }
-
   private static async hasAccessForUser(doc: any, userId: string): Promise<{ hasAccess: boolean; reason: string }> {
     if (!doc) return { hasAccess: false, reason: "DOCUMENT_NOT_FOUND" };
     const ownerId = doc.uploaded_by?.toString?.();
@@ -52,8 +32,6 @@ class AdminDocumentPermissionController {
   }
 
   static async listDocuments(req: Request, res: Response) {
-    const admin = await AdminDocumentPermissionController.ensureAdmin(req, res);
-    if (!admin) return;
     try {
       const search = String(req.query.search || "").trim();
       const page = Math.max(Number(req.query.page || 1), 1);
@@ -105,8 +83,6 @@ class AdminDocumentPermissionController {
   }
 
   static async getDocumentAccess(req: Request, res: Response) {
-    const admin = await AdminDocumentPermissionController.ensureAdmin(req, res);
-    if (!admin) return;
     try {
       const { id } = req.params;
       const doc = await UserDocument.findById(id).populate("uploaded_by", "first_name last_name email");
@@ -151,8 +127,7 @@ class AdminDocumentPermissionController {
   }
 
   static async grantAccess(req: Request, res: Response) {
-    const admin = await AdminDocumentPermissionController.ensureAdmin(req, res);
-    if (!admin) return;
+    const adminUserId = getAuthUserId(req)!;
     const session = await mongoose.startSession();
     try {
       const { id } = req.params;
@@ -174,7 +149,7 @@ class AdminDocumentPermissionController {
             { document_id: id, user_id: userId },
             {
               $set: {
-                granted_by: admin.userId,
+                granted_by: adminUserId,
                 granted_at: new Date(),
                 revoked_at: null,
                 revoked_by: null,
@@ -185,7 +160,7 @@ class AdminDocumentPermissionController {
           if ((result as any).modifiedCount || (result as any).upsertedCount) affected += 1;
           await DocumentPermissionAuditLog.create([{
             document_id: id,
-            actor_id: admin.userId,
+            actor_id: adminUserId,
             action: "GRANT",
             target_user_id: userId,
           }], { session });
@@ -202,8 +177,7 @@ class AdminDocumentPermissionController {
   }
 
   static async revokeAccess(req: Request, res: Response) {
-    const admin = await AdminDocumentPermissionController.ensureAdmin(req, res);
-    if (!admin) return;
+    const adminUserId = getAuthUserId(req)!;
     const session = await mongoose.startSession();
     try {
       const { id } = req.params;
@@ -221,7 +195,7 @@ class AdminDocumentPermissionController {
       await session.withTransaction(async () => {
         const result = await DocumentPermission.updateMany(
           { document_id: id, user_id: { $in: userIds }, revoked_at: null },
-          { $set: { revoked_at: new Date(), revoked_by: admin.userId } },
+          { $set: { revoked_at: new Date(), revoked_by: adminUserId } },
           { session }
         );
         affected = (result as any).modifiedCount || 0;
@@ -229,7 +203,7 @@ class AdminDocumentPermissionController {
         for (const userId of userIds) {
           await DocumentPermissionAuditLog.create([{
             document_id: id,
-            actor_id: admin.userId,
+            actor_id: adminUserId,
             action: "REVOKE",
             target_user_id: userId,
           }], { session });
@@ -245,8 +219,7 @@ class AdminDocumentPermissionController {
   }
 
   static async updatePrivacy(req: Request, res: Response) {
-    const admin = await AdminDocumentPermissionController.ensureAdmin(req, res);
-    if (!admin) return;
+    const adminUserId = getAuthUserId(req)!;
     try {
       const { id } = req.params;
       const { privacyLevel } = req.body as { privacyLevel?: DocumentPrivacyLevel };
@@ -276,7 +249,7 @@ class AdminDocumentPermissionController {
 
       await DocumentPermissionAuditLog.create({
         document_id: id,
-        actor_id: admin.userId,
+        actor_id: adminUserId,
         action: "PRIVACY_UPDATE",
         old_value: { privacyLevel: old },
         new_value: { privacyLevel },
@@ -297,8 +270,6 @@ class AdminDocumentPermissionController {
   }
 
   static async accessCheck(req: Request, res: Response) {
-    const admin = await AdminDocumentPermissionController.ensureAdmin(req, res);
-    if (!admin) return;
     try {
       const { id } = req.params;
       const userId = String(req.query.userId || "");

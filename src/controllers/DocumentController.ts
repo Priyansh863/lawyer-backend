@@ -323,7 +323,7 @@ export default class DocumentController {
    * Enhanced upload supporting PDF, Image, and Video files with AI processing
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
+   * Identity is taken from the auth token (req.id / req.user.userId).
    * @param req.body.fileType (optional: 'pdf' | 'image' | 'video')
    */
   static async uploadDocumentEnhanced(req: Request, res: Response) {
@@ -582,7 +582,7 @@ export default class DocumentController {
    * Automatically triggers AI processing for PDF files in background
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
+   * Identity is taken from the auth token (req.id / req.user.userId).
    */
   static async uploadDocument(req: Request, res: Response) {
     try {
@@ -862,7 +862,7 @@ export default class DocumentController {
    * Upload document with privacy settings and optional AI processing
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
+   * Identity is taken from the auth token (req.id / req.user.userId).
    * @param req.body.privacy (string, 'public' or 'private')
    * @param req.body.selectedUsers (array, required if privacy is 'private')
    * @param req.body.processWithAI (boolean, optional)
@@ -1034,7 +1034,7 @@ export default class DocumentController {
    * Upload document and wait for AI processing to complete, return summary in response
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
+   * Identity is taken from the auth token (req.id / req.user.userId).
    */
   static async uploadDocumentWithSummary(req: Request, res: Response) {
     try {

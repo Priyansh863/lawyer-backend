@@ -2,13 +2,66 @@ import { NextFunction, Response, Request } from "express";
 import * as jwt from "jsonwebtoken";
 import dbConfig from "../config/secretManagerConfig";
 import { ISecretManagerData } from "../Interfaces/commonInterfaces";
+import { User } from "../models/user";
 
-interface AuthenticatedRequest extends Request {
+export interface AuthenticatedRequest extends Request {
   user?: {
     userId: string;
     role: string;
   };
 }
+
+export type AdminAccessResult = "ok" | "unauthorized" | "forbidden";
+
+export function getAuthUserId(req: Request): string | null {
+  const authReq = req as AuthenticatedRequest;
+  const id = (req as any).id || authReq.user?.userId;
+  return id ? String(id) : null;
+}
+
+export function getAuthRole(req: Request): string | undefined {
+  const authReq = req as AuthenticatedRequest;
+  return (req as any).role || authReq.user?.role;
+}
+
+/** Resolves admin access from JWT role with DB fallback for legacy tokens. */
+export async function resolveAdminAccess(
+  userId: string | undefined,
+  role: string | undefined,
+  lookupAccountType?: (id: string) => Promise<string | null | undefined>
+): Promise<AdminAccessResult> {
+  if (!userId) return "unauthorized";
+  if ((role || "").toLowerCase() === "admin") return "ok";
+
+  const resolveAccountType =
+    lookupAccountType ||
+    (async (id: string) => {
+      const user = await User.findById(id).select("account_type").lean();
+      return (user as { account_type?: string } | null)?.account_type;
+    });
+
+  const accountType = await resolveAccountType(userId);
+  if ((accountType || "").toLowerCase() === "admin") return "ok";
+  return "forbidden";
+}
+
+export const requireAdmin = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  const userId = getAuthUserId(req);
+  const role = getAuthRole(req);
+  const access = await resolveAdminAccess(userId || undefined, role);
+
+  if (access === "unauthorized") {
+    return res.status(401).json({ success: false, message: "Unauthorized" });
+  }
+  if (access === "forbidden") {
+    return res.status(403).json({ success: false, message: "Forbidden: admin access required" });
+  }
+  next();
+};
 
 function extractBearerToken(req: Request): string | null {
   const authHeader =

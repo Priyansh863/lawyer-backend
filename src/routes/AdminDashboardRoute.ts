@@ -1,51 +1,53 @@
 import { Router } from "express";
 import AdminDashboardController from "../controllers/AdminDashboardController";
 import AdminDocumentPermissionController from "../controllers/AdminDocumentPermissionController";
-import { authenticateToken } from "../middleware/auth";
+import { authenticateToken, requireAdmin } from "../middleware/auth";
 
 const router = Router();
 
+router.use(authenticateToken, requireAdmin);
+
 // Admin dashboard statistics
-router.get("/stats", authenticateToken, AdminDashboardController.getDashboardStats);
+router.get("/stats", AdminDashboardController.getDashboardStats);
 
 // User roles distribution for chart
-router.get("/user-roles", authenticateToken, AdminDashboardController.getUserRolesDistribution);
+router.get("/user-roles", AdminDashboardController.getUserRolesDistribution);
 
 // Recent activity (latest 5 notifications)
-router.get("/recent-activity", authenticateToken, AdminDashboardController.getRecentActivity);
+router.get("/recent-activity", AdminDashboardController.getRecentActivity);
 
 // All notifications for admin (paginated)
-router.get("/notifications", authenticateToken, AdminDashboardController.getAllNotifications);
+router.get("/notifications", AdminDashboardController.getAllNotifications);
 
 // User management routes
-router.get('/users', authenticateToken, AdminDashboardController.getAllUsers);
-router.get('/users/export', authenticateToken, AdminDashboardController.exportUsers);
-router.get('/users/:userId', authenticateToken, AdminDashboardController.getUserDetails);
-router.post('/users/:userId/verify', authenticateToken, AdminDashboardController.verifyLawyer);
-router.post('/users/:userId/reject', authenticateToken, AdminDashboardController.rejectLawyer);
-router.patch('/users/:userId/toggle-active', authenticateToken, AdminDashboardController.toggleUserActive);
-router.patch('/users/:userId/toggle-verified', authenticateToken, AdminDashboardController.toggleUserVerified);
+router.get('/users', AdminDashboardController.getAllUsers);
+router.get('/users/export', AdminDashboardController.exportUsers);
+router.get('/users/:userId', AdminDashboardController.getUserDetails);
+router.post('/users/:userId/verify', AdminDashboardController.verifyLawyer);
+router.post('/users/:userId/reject', AdminDashboardController.rejectLawyer);
+router.patch('/users/:userId/toggle-active', AdminDashboardController.toggleUserActive);
+router.patch('/users/:userId/toggle-verified', AdminDashboardController.toggleUserVerified);
 
 // Lawyer verification routes
-router.get('/lawyers/pending', authenticateToken, AdminDashboardController.getPendingLawyers);
+router.get('/lawyers/pending', AdminDashboardController.getPendingLawyers);
 
 // Transaction management routes
-router.get('/transactions', authenticateToken, AdminDashboardController.getTransactions);
+router.get('/transactions', AdminDashboardController.getTransactions);
 
 // Content monitoring routes
-router.get('/content', authenticateToken, AdminDashboardController.getContentMonitoring);
-router.put('/content/:contentId/status', authenticateToken, AdminDashboardController.updateContentStatus);
+router.get('/content', AdminDashboardController.getContentMonitoring);
+router.put('/content/:contentId/status', AdminDashboardController.updateContentStatus);
 
 // Admin profile routes
-router.get('/profile', authenticateToken, AdminDashboardController.getAdminProfile);
-router.put('/profile', authenticateToken, AdminDashboardController.updateAdminProfile);
+router.get('/profile', AdminDashboardController.getAdminProfile);
+router.put('/profile', AdminDashboardController.updateAdminProfile);
 
 // Document permission management
-router.get('/documents', authenticateToken, AdminDocumentPermissionController.listDocuments);
-router.get('/documents/:id/access', authenticateToken, AdminDocumentPermissionController.getDocumentAccess);
-router.post('/documents/:id/access/grant', authenticateToken, AdminDocumentPermissionController.grantAccess);
-router.post('/documents/:id/access/revoke', authenticateToken, AdminDocumentPermissionController.revokeAccess);
-router.patch('/documents/:id/privacy', authenticateToken, AdminDocumentPermissionController.updatePrivacy);
-router.get('/documents/:id/access-check', authenticateToken, AdminDocumentPermissionController.accessCheck);
+router.get('/documents', AdminDocumentPermissionController.listDocuments);
+router.get('/documents/:id/access', AdminDocumentPermissionController.getDocumentAccess);
+router.post('/documents/:id/access/grant', AdminDocumentPermissionController.grantAccess);
+router.post('/documents/:id/access/revoke', AdminDocumentPermissionController.revokeAccess);
+router.patch('/documents/:id/privacy', AdminDocumentPermissionController.updatePrivacy);
+router.get('/documents/:id/access-check', AdminDocumentPermissionController.accessCheck);
 
 export default router;

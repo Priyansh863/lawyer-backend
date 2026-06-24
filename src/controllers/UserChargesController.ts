@@ -1,28 +1,27 @@
 import { Request, Response } from "express";
 import { User } from "../models/user";
-import { UserTokenBalance, TokenTransaction, ETransactionType, ETransactionStatus, EUsageCategory } from "../models/token";
+import { UserTokenBalance, TokenTransaction, ETransactionType, ETransactionStatus } from "../models/token";
+import { getAuthRole, getAuthUserId } from "../middleware/auth";
 
 export default class UserChargesController {
   /**
-   * Update lawyer consultation charges
-   * @param req.body.userId - User ID
+   * Update lawyer consultation charges for the authenticated lawyer.
    * @param req.body.charges - General consultation rate (backward compatibility)
    * @param req.body.chat_rate - Chat consultation rate
    * @param req.body.video_rate - Video consultation rate
    */
   static async updateCharges(req: Request, res: Response) {
     try {
-      const { userId, charges, chat_rate, video_rate } = req.body;
-
-      // Validate required fields
+      const userId = getAuthUserId(req);
       if (!userId) {
-        return res.status(400).json({
+        return res.status(401).json({
           success: false,
-          message: "User ID is required"
+          message: "Unauthorized"
         });
       }
 
-      // Find user
+      const { charges, chat_rate, video_rate } = req.body;
+
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({
@@ -31,7 +30,6 @@ export default class UserChargesController {
         });
       }
 
-      // Only lawyers can set charges
       if (user.account_type !== 'lawyer') {
         return res.status(403).json({
           success: false,
@@ -39,8 +37,7 @@ export default class UserChargesController {
         });
       }
 
-      // Prepare update object
-      const updateData: any = {};
+      const updateData: Record<string, number> = {};
 
       if (charges !== undefined && charges !== null) {
         if (charges < 0) {
@@ -72,7 +69,6 @@ export default class UserChargesController {
         updateData.video_rate = video_rate;
       }
 
-      // Update charges
       const updatedUser = await User.findByIdAndUpdate(
         userId,
         updateData,
@@ -181,23 +177,26 @@ export default class UserChargesController {
   }
 
   /**
-   * Check if client has sufficient tokens for consultation
-   * @param req.body.clientId - Client ID
+   * Check if the authenticated client has sufficient tokens for consultation
    * @param req.body.lawyerId - Lawyer ID
    * @param req.body.consultationType - 'chat' or 'video'
    */
   static async checkTokenBalance(req: Request, res: Response) {
     try {
-      const { clientId, lawyerId, consultationType } = req.body;
+      const clientId = getAuthUserId(req);
+      if (!clientId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      if (!clientId || !lawyerId || !consultationType) {
+      const { lawyerId, consultationType } = req.body;
+
+      if (!lawyerId || !consultationType) {
         return res.status(400).json({
           success: false,
-          message: "Client ID, Lawyer ID, and consultation type are required"
+          message: "Lawyer ID and consultation type are required"
         });
       }
 
-      // Get client's token balance
       const clientTokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
       if (!clientTokenBalance || clientTokenBalance.current_balance <= 0) {
         return res.status(400).json({
@@ -207,7 +206,6 @@ export default class UserChargesController {
         });
       }
 
-      // Get lawyer's charges
       const lawyer = await User.findById(lawyerId).select('charges chat_rate video_rate first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
@@ -216,7 +214,6 @@ export default class UserChargesController {
         });
       }
 
-      // Determine required tokens based on consultation type
       let requiredTokens = 0;
       if (consultationType === 'chat') {
         requiredTokens = lawyer.chat_rate || lawyer.charges || 0;
@@ -261,24 +258,27 @@ export default class UserChargesController {
   }
 
   /**
-   * Deduct tokens when starting consultation
-   * @param req.body.clientId - Client ID
+   * Deduct tokens when starting consultation for the authenticated client
    * @param req.body.lawyerId - Lawyer ID
    * @param req.body.consultationType - 'chat' or 'video'
    * @param req.body.sessionId - Chat ID or Meeting ID for reference
    */
   static async deductTokens(req: Request, res: Response) {
     try {
-      const { clientId, lawyerId, consultationType, sessionId } = req.body;
+      const clientId = getAuthUserId(req);
+      if (!clientId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      if (!clientId || !lawyerId || !consultationType || !sessionId) {
+      const { lawyerId, consultationType, sessionId } = req.body;
+
+      if (!lawyerId || !consultationType || !sessionId) {
         return res.status(400).json({
           success: false,
-          message: "All fields are required"
+          message: "Lawyer ID, consultation type, and session ID are required"
         });
       }
 
-      // Get lawyer's charges
       const lawyer = await User.findById(lawyerId).select('charges chat_rate video_rate first_name last_name');
       if (!lawyer) {
         return res.status(404).json({
@@ -287,7 +287,6 @@ export default class UserChargesController {
         });
       }
 
-      // Determine tokens to deduct based on consultation type
       let tokensToDeduct = 0;
       if (consultationType === 'chat') {
         tokensToDeduct = lawyer.chat_rate || lawyer.charges || 0;
@@ -303,11 +302,9 @@ export default class UserChargesController {
         });
       }
 
-      // Use tokens from client's balance
       try {
         const updatedBalance = await (UserTokenBalance as any).useTokens(clientId, tokensToDeduct);
 
-        // Create transaction record
         await TokenTransaction.create({
           user_id: clientId,
           type: ETransactionType.usage,
@@ -353,25 +350,29 @@ export default class UserChargesController {
   }
 
   /**
-   * Get client's token balance and transaction history
-   * @param req.params.clientId - Client ID
+   * Get authenticated client's token balance and transaction history
    */
   static async getClientTokenInfo(req: Request, res: Response) {
     try {
-      const { clientId } = req.params;
+      const authUserId = getAuthUserId(req);
+      if (!authUserId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      if (!clientId) {
-        return res.status(400).json({
+      const { clientId } = req.params;
+      const role = (getAuthRole(req) || "").toLowerCase();
+      const targetClientId = clientId || authUserId;
+
+      if (targetClientId !== authUserId && role !== "admin") {
+        return res.status(403).json({
           success: false,
-          message: "Client ID is required"
+          message: "Forbidden"
         });
       }
 
-      // Get token balance
-      const tokenBalance = await UserTokenBalance.findOne({ user_id: clientId });
+      const tokenBalance = await UserTokenBalance.findOne({ user_id: targetClientId });
 
-      // Get recent transactions
-      const recentTransactions = await TokenTransaction.find({ user_id: clientId })
+      const recentTransactions = await TokenTransaction.find({ user_id: targetClientId })
         .sort({ created_at: -1 })
         .limit(10)
         .select('type amount description category status created_at metadata');
@@ -397,36 +398,40 @@ export default class UserChargesController {
   }
 
   /**
-   * Get token transaction history for a user
-   * @param req.params.userId - User ID
+   * Get token transaction history for the authenticated user
    */
   static async getTokenTransactionHistory(req: Request, res: Response) {
     try {
+      const authUserId = getAuthUserId(req);
+      if (!authUserId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
       const { userId } = req.params;
+      const role = (getAuthRole(req) || "").toLowerCase();
+      const targetUserId = userId || authUserId;
+
+      if (targetUserId !== authUserId && role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden"
+        });
+      }
+
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 20;
       const offset = (page - 1) * limit;
 
-      if (!userId) {
-        return res.status(400).json({
-          success: false,
-          message: "User ID is required"
-        });
-      }
-
-      // Get user's token transactions
-      const transactions = await TokenTransaction.find({ user_id: userId })
+      const transactions = await TokenTransaction.find({ user_id: targetUserId })
         .sort({ createdAt: -1 })
         .skip(offset)
         .limit(limit)
         .lean();
 
-      // Get total count for pagination
-      const totalCount = await TokenTransaction.countDocuments({ user_id: userId });
+      const totalCount = await TokenTransaction.countDocuments({ user_id: targetUserId });
       const totalPages = Math.ceil(totalCount / limit);
 
-      // Get current token balance
-      const tokenBalance = await UserTokenBalance.findOne({ user_id: userId });
+      const tokenBalance = await UserTokenBalance.findOne({ user_id: targetUserId });
 
       return res.status(200).json({
         success: true,
