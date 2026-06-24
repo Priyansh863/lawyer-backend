@@ -16,8 +16,6 @@
     "./check_*.ts",
     "./inspect_*.ts",
     "./src/**/*_backup.ts",
-    "./src/controllers/EnhancedCaseController.ts",
-    "./src/utils/fcmNotification.ts",
     "./src/migrations/**"
   ],
   "lib": ["es2015"]
