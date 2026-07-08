@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { uploadImg, ingestS3UploadToStoredBase64, roundTripBase64ViaS3ToStoredBase64 } from "../utils/fileUpload";
-import UserDocument, { DocumentPrivacy, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
+import UserDocument, { DocumentPrivacy, DocumentPrivacyLevel, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
 import { compressBase64, decompressBase64 } from "../utils/documentUtils";
@@ -9,6 +9,8 @@ import { User } from "../models/user";
 import Case from "../models/case";
 import mongoose from "mongoose";
 import { NotificationService } from '../services/notificationService';
+import DocumentPermission from "../models/DocumentPermission";
+import DocumentPermissionAuditLog from "../models/DocumentPermissionAuditLog";
 
 export default class DocumentController {
   private static logPerf(label: string, startedAtMs: number, extra?: Record<string, any>) {
@@ -52,24 +54,250 @@ export default class DocumentController {
     return isOwner || isExplicitParticipant;
   }
 
-  /** Owner, shared lawyer, or lawyer with a case for the uploader (mirrors lawyer document visibility). */
+  /** Map legacy DB values to public | private for API responses. */
+  private static normalizeResponsePrivacy(privacy?: string | null): DocumentPrivacy {
+    if (privacy === DocumentPrivacy.PUBLIC) return DocumentPrivacy.PUBLIC;
+    return DocumentPrivacy.PRIVATE;
+  }
+
+  private static parsePrivacyInput(
+    privacy: unknown
+  ): { ok: true; value: DocumentPrivacy } | { ok: false; status: number; message: string } {
+    if (privacy === undefined || privacy === null || privacy === "") {
+      return { ok: true, value: DocumentPrivacy.PRIVATE };
+    }
+    if (privacy === "fully_private") {
+      return {
+        ok: false,
+        status: 400,
+        message: "fully_private is no longer supported. Use private instead.",
+      };
+    }
+    if (privacy === DocumentPrivacy.PUBLIC || privacy === DocumentPrivacy.PRIVATE) {
+      return { ok: true, value: privacy };
+    }
+    return {
+      ok: false,
+      status: 400,
+      message: 'Invalid privacy setting. Must be "public" or "private".',
+    };
+  }
+
+  private static mapPrivacyFilterParam(privacy: unknown): DocumentPrivacy | null {
+    if (!privacy || privacy === "all") return null;
+    if (privacy === "fully_private") return DocumentPrivacy.PRIVATE;
+    if (privacy === DocumentPrivacy.PUBLIC || privacy === DocumentPrivacy.PRIVATE) {
+      return privacy;
+    }
+    return null;
+  }
+
+  private static getDocumentOwnerId(doc: any): string {
+    if (!doc?.uploaded_by) return "";
+    return doc.uploaded_by._id
+      ? doc.uploaded_by._id.toString()
+      : doc.uploaded_by.toString();
+  }
+
+  /** True when privacy is public (field or legacy privacy_level). */
+  private static isPublicDocument(doc: any): boolean {
+    if (doc?.privacy === DocumentPrivacy.PUBLIC) return true;
+    if (doc?.privacy_level === DocumentPrivacyLevel.PUBLIC) return true;
+    return false;
+  }
+
+  private static getAuthUserId(req: Request): string | null {
+    const id = (req as any).id || (req as any).user?.userId;
+    return id ? String(id) : null;
+  }
+
+  private static canAccessDocument(userId: string | undefined, role: string | undefined, doc: any): boolean {
+    if (!userId || !doc) return false;
+    if (role === "admin") return true;
+    const ownerId = DocumentController.getDocumentOwnerId(doc);
+    if (ownerId && ownerId === userId) return true;
+    if (DocumentController.isPublicDocument(doc)) return true;
+    const privacy = DocumentController.normalizeResponsePrivacy(doc.privacy);
+    if (privacy === DocumentPrivacy.PUBLIC) return true;
+    if (privacy === DocumentPrivacy.PRIVATE) {
+      return (
+        Array.isArray(doc.shared_with) &&
+        doc.shared_with.some(
+          (u: any) => (u?._id ? u._id.toString() : u?.toString?.()) === userId
+        )
+      );
+    }
+    return false;
+  }
+
+  /** Async access check including explicit DocumentPermission grant/revoke. */
+  private static async canAccessDocumentAsync(
+    userId: string | undefined,
+    role: string | undefined,
+    doc: any
+  ): Promise<boolean> {
+    if (!userId || !doc) return false;
+    if (role === "admin") return true;
+    const ownerId = DocumentController.getDocumentOwnerId(doc);
+    if (ownerId && ownerId === userId) return true;
+    if (DocumentController.isPublicDocument(doc)) return true;
+
+    const docId = doc._id;
+    const revoked = await DocumentPermission.exists({
+      document_id: docId,
+      user_id: new mongoose.Types.ObjectId(userId),
+      revoked_at: { $ne: null },
+    });
+    if (revoked) return false;
+
+    const activePerm = await DocumentPermission.exists({
+      document_id: docId,
+      user_id: new mongoose.Types.ObjectId(userId),
+      revoked_at: null,
+    });
+    if (activePerm) return true;
+
+    const privacy = DocumentController.normalizeResponsePrivacy(doc.privacy);
+    if (privacy === DocumentPrivacy.PRIVATE) {
+      return (
+        Array.isArray(doc.shared_with) &&
+        doc.shared_with.some(
+          (u: any) => (u?._id ? u._id.toString() : u?.toString?.()) === userId
+        )
+      );
+    }
+    return false;
+  }
+
+  private static toPrivacyLevel(privacy?: string | null): DocumentPrivacyLevel {
+    if (DocumentController.normalizeResponsePrivacy(privacy) === DocumentPrivacy.PUBLIC) {
+      return DocumentPrivacyLevel.PUBLIC;
+    }
+    return DocumentPrivacyLevel.PRIVATE_SHARED;
+  }
+
+  private static formatAccessUser(user: any) {
+    if (!user) return null;
+    const id = user._id ? user._id.toString() : user.toString();
+    return {
+      _id: id,
+      first_name: user.first_name ?? "",
+      last_name: user.last_name ?? "",
+      email: user.email ?? "",
+      account_type: user.account_type,
+    };
+  }
+
+  private static canManageDocumentAccess(
+    requesterId: string | undefined,
+    requesterRole: string | undefined,
+    document: any
+  ): boolean {
+    if (!requesterId || !document) return false;
+    if (requesterRole === "admin") return true;
+    const ownerId = document.uploaded_by?._id
+      ? document.uploaded_by._id.toString()
+      : document.uploaded_by?.toString?.();
+    return ownerId === requesterId;
+  }
+
+  /** Case-linked client IDs for a lawyer (GET /user/clients-list uses the same rule). */
+  private static async getOwnClientIds(lawyerId: string): Promise<string[]> {
+    const ids = await Case.distinct("client_id", { lawyer_id: lawyerId });
+    return ids.map((id) => id.toString());
+  }
+
+  /** Case-linked lawyer IDs for a client. */
+  private static async getOwnLawyerIds(clientId: string): Promise<string[]> {
+    const ids = await Case.distinct("lawyer_id", { client_id: clientId });
+    return ids.map((id) => id.toString());
+  }
+
+  private static async isOwnClient(lawyerId: string, clientId: string): Promise<boolean> {
+    if (!lawyerId || !clientId) return false;
+    return Case.exists({
+      lawyer_id: new mongoose.Types.ObjectId(lawyerId),
+      client_id: new mongoose.Types.ObjectId(clientId),
+    }).then(Boolean);
+  }
+
+  private static async isOwnLawyer(clientId: string, lawyerId: string): Promise<boolean> {
+    if (!clientId || !lawyerId) return false;
+    return Case.exists({
+      client_id: new mongoose.Types.ObjectId(clientId),
+      lawyer_id: new mongoose.Types.ObjectId(lawyerId),
+    }).then(Boolean);
+  }
+
+  /**
+   * Default grantable pool for Manage Access UI (quick picks):
+   * lawyer → own clients; client → own lawyers.
+   * Share API also accepts any other valid registered user when manually selected.
+   */
+  private static async getGrantableCandidateUsers(
+    requesterId: string,
+    requesterRole: string
+  ) {
+    const role = (requesterRole || "").toLowerCase();
+    if (role === "lawyer") {
+      const clientIds = await DocumentController.getOwnClientIds(requesterId);
+      return User.find(
+        { _id: { $in: clientIds }, account_type: "client" },
+        "first_name last_name email account_type"
+      )
+        .sort({ first_name: 1 })
+        .lean();
+    }
+    if (role === "client") {
+      const lawyerIds = await DocumentController.getOwnLawyerIds(requesterId);
+      return User.find(
+        { _id: { $in: lawyerIds }, account_type: "lawyer" },
+        "first_name last_name email account_type"
+      )
+        .sort({ first_name: 1 })
+        .lean();
+    }
+    return [];
+  }
+
+  /** Owner/admin may share with any registered user; validates IDs only. */
+  private static async validateShareTargetUsers(
+    requesterId: string,
+    userIds: string[],
+    ownerId?: string
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const uniqueIds = [...new Set(userIds.filter(Boolean))];
+    if (!uniqueIds.length) {
+      return { ok: false, message: "Please provide user IDs to share with" };
+    }
+
+    const invalidOid = uniqueIds.filter((id) => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidOid.length > 0) {
+      return { ok: false, message: "Some provided IDs are not valid user IDs" };
+    }
+
+    if (uniqueIds.some((id) => id === requesterId)) {
+      return { ok: false, message: "You cannot share a document with yourself" };
+    }
+
+    if (ownerId && uniqueIds.some((id) => id === ownerId)) {
+      return { ok: false, message: "The document owner already has access" };
+    }
+
+    const users = await User.find({ _id: { $in: uniqueIds } }).select("_id");
+    if (users.length !== uniqueIds.length) {
+      return { ok: false, message: "Some provided IDs are not valid registered users" };
+    }
+
+    return { ok: true };
+  }
+
   private static async isRemoveAppAuthorized(doc: any, userId: string): Promise<boolean> {
     if (!userId || !doc) return false;
     if (DocumentController.isStorageMutationAuthorized(doc, userId)) return true;
-    const uploadedById =
-      (doc.uploaded_by && (doc.uploaded_by._id ? doc.uploaded_by._id.toString() : doc.uploaded_by.toString())) || '';
-    if (!uploadedById) return false;
-    const requester = await User.findById(userId).select('account_type').lean();
-    if ((requester as any)?.account_type !== 'lawyer') return false;
-    const requesterObjectId = new mongoose.Types.ObjectId(userId);
-    const clientObjectId = new mongoose.Types.ObjectId(uploadedById);
-    const hasCase = await Case.exists({ client_id: clientObjectId, lawyer_id: requesterObjectId });
-    if (!hasCase) return false;
-    if (doc.privacy === DocumentPrivacy.PUBLIC || doc.privacy === DocumentPrivacy.PRIVATE) return true;
-    if (doc.privacy === DocumentPrivacy.FULLY_PRIVATE) {
-      return Array.isArray(doc.shared_with) && doc.shared_with.some((u: any) => u?.toString?.() === userId);
-    }
-    return false;
+    const requester = await User.findById(userId).select("account_type").lean();
+    const role = (requester as any)?.account_type;
+    return DocumentController.canAccessDocument(userId, role, doc);
   }
 
   private static hasPcCopyForDesktopDelete(
@@ -95,13 +323,17 @@ export default class DocumentController {
    * Enhanced upload supporting PDF, Image, and Video files with AI processing
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
+   * Identity is taken from the auth token (req.id / req.user.userId).
    * @param req.body.fileType (optional: 'pdf' | 'image' | 'video')
    */
   static async uploadDocumentEnhanced(req: Request, res: Response) {
     try {
+      const user_id = DocumentController.getAuthUserId(req);
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
       const {
-        user_id,
         link,
         file_base64,
         document_name,
@@ -116,6 +348,12 @@ export default class DocumentController {
       } = req.body;
 
       console.log(`[API] Received uploadDocumentEnhanced request - Name: ${document_name}, Base64 length: ${file_base64?.length || 0}`);
+
+      const privacyParsed = DocumentController.parsePrivacyInput(privacy);
+      if (privacyParsed.ok === false) {
+        return res.status(privacyParsed.status).json({ success: false, message: privacyParsed.message });
+      }
+      const normalizedPrivacy = privacyParsed.value;
 
       // Validate required fields
       if (!user_id || !document_name) {
@@ -134,7 +372,7 @@ export default class DocumentController {
       }
 
       // Validate case_id logic: only private documents can have case_id
-      if (case_id && privacy !== DocumentPrivacy.PRIVATE) {
+      if (case_id && normalizedPrivacy !== DocumentPrivacy.PRIVATE) {
         return res.status(400).json({
           success: false,
           message: "Case ID can only be assigned to private documents"
@@ -173,7 +411,8 @@ export default class DocumentController {
         file_base64: processedBase64,
         file_type: file_type || fileTypeDisplay,
         document_type: 'general', // Always general, no user selection
-        privacy: privacy || 'public',
+        privacy: normalizedPrivacy,
+        privacy_level: DocumentController.toPrivacyLevel(normalizedPrivacy),
         file_size: file_size,
         storage_type: storage_type || 'cloud',
         storage_location: storage_location || null,
@@ -181,7 +420,7 @@ export default class DocumentController {
       };
 
       // Only add case_id if privacy is private and case_id is provided
-      if (privacy === DocumentPrivacy.PRIVATE && case_id) {
+      if (normalizedPrivacy === DocumentPrivacy.PRIVATE && case_id) {
         documentData.case_id = case_id;
       }
 
@@ -197,7 +436,8 @@ export default class DocumentController {
           file_base64: processedBase64,
           file_type: file_type || fileTypeDisplay,
           document_type: 'general', // Always general, no user selection
-          privacy: privacy || 'public',
+          privacy: normalizedPrivacy,
+          privacy_level: DocumentController.toPrivacyLevel(normalizedPrivacy),
           file_size: file_size,
           storage_type: storage_type || 'cloud',
           storage_location: storage_location || null,
@@ -223,7 +463,7 @@ export default class DocumentController {
 
               // Send notification for document upload if public (after AI processing)
               try {
-                if (privacy === DocumentPrivacy.PUBLIC) {
+                if (normalizedPrivacy === DocumentPrivacy.PUBLIC) {
                   await NotificationService.notifyDocumentUploaded(doc, user_id);
                 }
               } catch (notificationError) {
@@ -253,7 +493,7 @@ export default class DocumentController {
       } else {
         // Send notification for document upload if public
         try {
-          if (privacy === DocumentPrivacy.PUBLIC) {
+          if (normalizedPrivacy === DocumentPrivacy.PUBLIC) {
             await NotificationService.notifyDocumentUploaded(doc, user_id);
           }
         } catch (notificationError) {
@@ -301,6 +541,11 @@ export default class DocumentController {
         });
       }
 
+      const privacyParsed = DocumentController.parsePrivacyInput(privacy);
+      if (privacyParsed.ok === false) {
+        return res.status(privacyParsed.status).json({ success: false, message: privacyParsed.message });
+      }
+
       // Create a document record that represents a folder
       const folderDoc = await UserDocument.create({
         document_name,
@@ -311,7 +556,8 @@ export default class DocumentController {
         file_type: file_type || 'folder',
         storage_type: storage_type || StorageType.CLOUD,
         storage_location: storage_location || null,
-        privacy: privacy || DocumentPrivacy.PRIVATE,
+        privacy: privacyParsed.value,
+        privacy_level: DocumentController.toPrivacyLevel(privacyParsed.value),
         document_type: DocumentType.GENERAL,
         shared_with: [],
         is_secure_link: false
@@ -336,19 +582,21 @@ export default class DocumentController {
    * Automatically triggers AI processing for PDF files in background
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
+   * Identity is taken from the auth token (req.id / req.user.userId).
    */
   static async uploadDocument(req: Request, res: Response) {
-    // Save document record after upload
     try {
-      const { userId, fileUrl, fileName, privacy, file_base64 } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      console.log("re.body=======", req.body)
+      const { fileUrl, fileName, privacy, file_base64 } = req.body;
 
-      if (!userId || !fileName) {
+      if (!fileName) {
         return res.status(400).json({
           success: false,
-          message: "userId and fileName are required"
+          message: "fileName is required"
         });
       }
 
@@ -357,6 +605,12 @@ export default class DocumentController {
       const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
       const linkStored = s3Ingest ? undefined : fileUrl;
 
+      const privacyParsed = DocumentController.parsePrivacyInput(privacy);
+      if (privacyParsed.ok === false) {
+        return res.status(privacyParsed.status).json({ success: false, message: privacyParsed.message });
+      }
+      const normalizedPrivacy = privacyParsed.value;
+
       // Save to MongoDB
       const doc = await UserDocument.create({
         document_name: fileName,
@@ -364,7 +618,8 @@ export default class DocumentController {
         uploaded_by: userId,
         link: linkStored,
         file_base64: storedBase64,
-        privacy
+        privacy: normalizedPrivacy,
+        privacy_level: DocumentController.toPrivacyLevel(normalizedPrivacy),
       });
 
       // Automatically trigger AI processing for PDF files in background
@@ -394,7 +649,7 @@ export default class DocumentController {
 
       // Send notification for document upload if public
       try {
-        if (privacy === DocumentPrivacy.PUBLIC) {
+        if (normalizedPrivacy === DocumentPrivacy.PUBLIC) {
           await NotificationService.notifyDocumentUploaded(doc, userId);
         }
       } catch (notificationError) {
@@ -420,11 +675,8 @@ export default class DocumentController {
       const limit = Math.min(Math.max(limitRaw, 1), 50);
       const skip = (page - 1) * limit;
 
-      // Fetch user's own documents AND all public documents from other users.
-      // Important: exclude large `file_base64` field; UI should fetch content via /:id/view or /:id/download.
-      const query = {
-        $or: [{ uploaded_by: req.id }, { privacy: DocumentPrivacy.PUBLIC }],
-      };
+      // Owner-only "My documents" list. Shared docs are returned by /shared-with-me.
+      const query = { uploaded_by: req.id };
 
       const [documents, total] = await Promise.all([
         UserDocument.find(query)
@@ -442,6 +694,14 @@ export default class DocumentController {
         document_name: doc?.document_name ?? null,
         status: doc?.status ?? null,
         summary: doc?.summary ?? doc?.ai_summary ?? null,
+        privacy: DocumentController.normalizeResponsePrivacy(doc?.privacy),
+        shared_with: doc?.shared_with ?? [],
+        file_size: (() => {
+          const rawFileSize = doc?.file_size ?? doc?.fileSize ?? doc?.size;
+          const isFolder = String(doc?.file_type || '').toLowerCase() === 'folder';
+          const parsedFileSize = Number(rawFileSize);
+          return isFolder ? 0 : (Number.isFinite(parsedFileSize) ? parsedFileSize : 0);
+        })(),
         storage_type: doc?.storage_type ?? null,
         storage_location: doc?.storage_location ?? null,
         link: doc?.link ?? null,
@@ -467,11 +727,143 @@ export default class DocumentController {
   }
 
   /**
+   * All other users' public documents (not scoped by client/case/network).
+   * GET /api/v1/document/public
+   */
+  static async listPublicDocuments(req: any, res: Response) {
+    const t0 = Date.now();
+    try {
+      const userId = req.id as string | undefined;
+      if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+      const limitRaw = parseInt(req.query.limit as string) || 100;
+      const limit = Math.min(Math.max(limitRaw, 1), 500);
+      const skip = (page - 1) * limit;
+      const userObjectId = new mongoose.Types.ObjectId(userId);
+      const matchQuery = DocumentController.buildOtherUsersPublicQuery(userObjectId);
+
+      const [documents, total] = await Promise.all([
+        UserDocument.find(matchQuery)
+          .select("-file_base64")
+          .populate("uploaded_by", "first_name last_name email account_type")
+          .sort({ created_at: -1, createdAt: -1, _id: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        UserDocument.countDocuments(matchQuery),
+      ]);
+
+      const visible = documents
+        .filter(
+          (d: any) =>
+            DocumentController.getDocumentOwnerId(d) !== userId &&
+            DocumentController.canAccessDocument(userId, req.role, d)
+        )
+        .map((d: any) => DocumentController.normalizeDocumentForUI(d));
+
+      DocumentController.logPerf("document.public", t0, {
+        page,
+        limit,
+        returned: visible.length,
+        total,
+      });
+
+      return res.status(200).json({
+        success: true,
+        documents: visible,
+        pagination: {
+          currentPage: page,
+          perPage: limit,
+          total,
+          totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+        },
+      });
+    } catch (error: any) {
+      console.error("List public documents error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to list public documents",
+      });
+    }
+  }
+
+  /**
+   * Shared & Public tab: other users' private docs shared with me + all other users' public docs.
+   * Excludes the current user's own uploads (those appear under My Documents).
+   * GET /api/v1/document/shared-with-me?includePublic=true
+   */
+  static async listSharedWithMe(req: any, res: Response) {
+    const t0 = Date.now();
+    try {
+      const userId = req.id as string | undefined;
+      if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+      const limitRaw = parseInt(req.query.limit as string) || 100;
+      const limit = Math.min(Math.max(limitRaw, 1), 500);
+      const skip = (page - 1) * limit;
+      const includePublic =
+        req.query.includePublic === undefined ||
+        req.query.includePublic === "true" ||
+        req.query.includePublic === "1";
+
+      const userObjectId = new mongoose.Types.ObjectId(userId);
+      const matchQuery = DocumentController.buildSharedWithMeQuery(userObjectId, includePublic);
+
+      const [documents, total] = await Promise.all([
+        UserDocument.find(matchQuery)
+          .select("-file_base64")
+          .populate("uploaded_by", "first_name last_name email account_type")
+          .sort({ created_at: -1, createdAt: -1, _id: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        UserDocument.countDocuments(matchQuery),
+      ]);
+
+      const visible = documents
+        .filter(
+          (d: any) =>
+            DocumentController.getDocumentOwnerId(d) !== userId &&
+            DocumentController.canAccessDocument(userId, req.role, d)
+        )
+        .map((d: any) => DocumentController.normalizeDocumentForUI(d));
+
+      DocumentController.logPerf("document.sharedWithMe", t0, {
+        page,
+        limit,
+        includePublic,
+        returned: visible.length,
+        total,
+      });
+
+      return res.status(200).json({
+        success: true,
+        documents: visible,
+        pagination: {
+          currentPage: page,
+          perPage: limit,
+          total,
+          totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+        },
+      });
+    } catch (error: any) {
+      console.error("List shared-with-me error:", error);
+      return res.status(500).json({ success: false, message: error.message || "Failed to list shared documents" });
+    }
+  }
+
+  /**
    * Upload document with privacy settings and optional AI processing
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
-   * @param req.body.privacy (string, 'public', 'private', or 'fully_private')
+   * Identity is taken from the auth token (req.id / req.user.userId).
+   * @param req.body.privacy (string, 'public' or 'private')
    * @param req.body.selectedUsers (array, required if privacy is 'private')
    * @param req.body.processWithAI (boolean, optional)
    * @param req.body.fileSize (number, optional)
@@ -483,12 +875,15 @@ export default class DocumentController {
     session.startTransaction();
 
     try {
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
       const {
-        userId,
         fileUrl,
         file_base64,
         fileName,
-        privacy = DocumentPrivacy.PRIVATE, // Default to private for security
         selectedUsers = [],
         processWithAI = false,
         fileSize,
@@ -525,6 +920,12 @@ export default class DocumentController {
         }
       }
 
+      const privacyParsed = DocumentController.parsePrivacyInput(req.body.privacy);
+      if (privacyParsed.ok === false) {
+        return res.status(privacyParsed.status).json({ success: false, message: privacyParsed.message });
+      }
+      const resolvedPrivacy = privacyParsed.value;
+
       // Get user to check role
       const user = await User.findById(userId);
       if (!user) {
@@ -532,7 +933,7 @@ export default class DocumentController {
       }
 
       // Validation for privacy options
-      if (privacy === DocumentPrivacy.PRIVATE && selectedUsers.length === 0) {
+      if (resolvedPrivacy === DocumentPrivacy.PRIVATE && selectedUsers.length === 0) {
         return res.status(400).json({
           success: false,
           message: "Private documents must have at least one selected user"
@@ -543,7 +944,7 @@ export default class DocumentController {
 
       // Prepare shared_with array based on privacy setting
       let sharedWith = [];
-      if (privacy === DocumentPrivacy.PRIVATE) {
+      if (resolvedPrivacy === DocumentPrivacy.PRIVATE) {
         sharedWith = selectedUsers;
       }
 
@@ -559,7 +960,8 @@ export default class DocumentController {
         uploaded_by: userId,
         link: linkStored,
         file_base64: storedBase64,
-        privacy,
+        privacy: resolvedPrivacy,
+        privacy_level: DocumentController.toPrivacyLevel(resolvedPrivacy),
         file_size: fileSize,
         file_type: fileType,
         document_type: documentType,
@@ -586,7 +988,7 @@ export default class DocumentController {
 
       // Send notification for document upload if public
       try {
-        if (privacy === DocumentPrivacy.PUBLIC) {
+        if (resolvedPrivacy === DocumentPrivacy.PUBLIC) {
           await NotificationService.notifyDocumentUploaded(savedDoc, userId);
         }
       } catch (notificationError) {
@@ -632,17 +1034,21 @@ export default class DocumentController {
    * Upload document and wait for AI processing to complete, return summary in response
    * @param req.body.file (base64 string)
    * @param req.body.fileName (string)
-   * @param req.body.userId (string)
+   * Identity is taken from the auth token (req.id / req.user.userId).
    */
   static async uploadDocumentWithSummary(req: Request, res: Response) {
     try {
-      const { userId, fileUrl, fileName, file_base64 } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      // Validate required fields
-      if (!userId || !fileUrl || !fileName) {
+      const { fileUrl, fileName, file_base64 } = req.body;
+
+      if (!fileUrl || !fileName) {
         return res.status(400).json({
           success: false,
-          message: "Missing required fields: userId, fileUrl, fileName"
+          message: "Missing required fields: fileUrl, fileName"
         });
       }
 
@@ -666,6 +1072,8 @@ export default class DocumentController {
         uploaded_by: userId,
         link: linkStored,
         file_base64: storedBase64,
+        privacy: DocumentPrivacy.PRIVATE,
+        privacy_level: DocumentPrivacyLevel.PRIVATE_SHARED,
       });
 
       console.log(`Processing PDF document synchronously: ${doc._id}`);
@@ -723,6 +1131,11 @@ export default class DocumentController {
       }
     }
 
+    const rawFileSize = doc?.file_size ?? doc?.fileSize ?? doc?.size;
+    const isFolder = String(doc?.file_type || '').toLowerCase() === 'folder';
+    const parsedFileSize = Number(rawFileSize);
+    const normalizedFileSize = isFolder ? 0 : (Number.isFinite(parsedFileSize) ? parsedFileSize : 0);
+
     return {
       // UI expects `id` (string) instead of `_id`
       id: doc?._id ? doc._id.toString() : undefined,
@@ -731,16 +1144,62 @@ export default class DocumentController {
       file_base64: fileBase64,
       createdAt: createdAtValue,
       created_at: created_atValue,
-      privacy: doc?.privacy ?? null,
+      privacy: DocumentController.normalizeResponsePrivacy(doc?.privacy),
+      privacy_level: doc?.privacy_level ?? DocumentController.toPrivacyLevel(doc?.privacy),
       file_type: doc?.file_type ?? null,
-      file_size: doc?.file_size ?? null,
+      file_size: normalizedFileSize,
       storage_type: doc?.storage_type ?? null,
       storage_location: doc?.storage_location ?? null,
       case_id: doc?.case_id ? doc.case_id.toString() : null,
       pc_delete_queued_at: doc?.pc_delete_queued_at ?? null,
       shared_with: Array.isArray(doc?.shared_with)
-        ? doc.shared_with.map((u: any) => (u?.toString ? u.toString() : u))
+        ? doc.shared_with.map((u: any) => {
+            if (u && typeof u === 'object' && !(u instanceof mongoose.Types.ObjectId)) {
+              return u;
+            }
+            return u?.toString ? u.toString() : u;
+          })
         : [],
+      uploaded_by: DocumentController.getDocumentOwnerId(doc) || null,
+      uploaded_by_user:
+        doc?.uploaded_by && typeof doc.uploaded_by === "object" && doc.uploaded_by._id
+          ? {
+              _id: doc.uploaded_by._id.toString(),
+              first_name: doc.uploaded_by.first_name,
+              last_name: doc.uploaded_by.last_name,
+              email: doc.uploaded_by.email,
+              account_type: doc.uploaded_by.account_type,
+            }
+          : null,
+    };
+  }
+
+  /** Other users' public docs — same set for every logged-in user. */
+  private static buildOtherUsersPublicQuery(userObjectId: mongoose.Types.ObjectId) {
+    return {
+      uploaded_by: { $ne: userObjectId },
+      $or: [
+        { privacy: DocumentPrivacy.PUBLIC },
+        { privacy_level: DocumentPrivacyLevel.PUBLIC },
+      ],
+    };
+  }
+
+  /** Shared & Public tab: private shares + (optionally) all other users' public docs. */
+  private static buildSharedWithMeQuery(
+    userObjectId: mongoose.Types.ObjectId,
+    includePublic: boolean
+  ) {
+    const orConditions: Record<string, unknown>[] = [
+      { privacy: DocumentPrivacy.PRIVATE, shared_with: userObjectId },
+    ];
+    if (includePublic) {
+      orConditions.push({ privacy: DocumentPrivacy.PUBLIC });
+      orConditions.push({ privacy_level: DocumentPrivacyLevel.PUBLIC });
+    }
+    return {
+      uploaded_by: { $ne: userObjectId },
+      $or: orConditions,
     };
   }
 
@@ -773,17 +1232,13 @@ export default class DocumentController {
 
       const conditions: any[] = [baseQuery];
 
-      // Requirement: privacy controls who can see private/fully_private documents.
       if (!isOwnerOrAdmin) {
         conditions.push({
           $or: [
-            // Public docs are visible to any authenticated user.
             { privacy: DocumentPrivacy.PUBLIC },
-            // Private/fully_private docs are visible only if shared with the requesting lawyer.
-            {
-              privacy: { $in: [DocumentPrivacy.PRIVATE, DocumentPrivacy.FULLY_PRIVATE] },
-              shared_with: requesterObjectId,
-            },
+            { privacy: DocumentPrivacy.PRIVATE, shared_with: requesterObjectId },
+            // Legacy rows until migration runs
+            { privacy: "fully_private", shared_with: requesterObjectId },
           ],
         });
       }
@@ -797,16 +1252,20 @@ export default class DocumentController {
       const documents = await UserDocument.find(matchQuery)
         .select("-file_base64")
         .sort({ created_at: -1, createdAt: -1, _id: -1 })
+        .populate('shared_with', 'first_name last_name email account_type profile_image')
         .lean();
+      const visibleDocs = documents.filter((d: any) =>
+        DocumentController.canAccessDocument(requesterId, requesterRole, d)
+      );
       DocumentController.logPerf("document.clientDocuments", t0, {
         clientId,
         status: status ?? null,
-        returned: documents.length,
+        returned: visibleDocs.length,
       });
 
       res.json({
         success: true,
-        data: documents.map((d: any) => DocumentController.normalizeDocumentForUI(d)),
+        data: visibleDocs.map((d: any) => DocumentController.normalizeDocumentForUI(d)),
       });
     } catch (error: any) {
       console.error('Error fetching client documents:', error);
@@ -877,34 +1336,15 @@ export default class DocumentController {
       const isAdmin = requesterRole === "admin";
       const isRequesterClient = requesterId === clientId;
 
-      // Privacy:
-      // - if requesting lawyer has at least one case for this client: do not require shared_with for `private` docs
-      // - otherwise: keep current rule (public OR private/fully_private only if shared_with contains the lawyer)
-      // - `fully_private` is still protected by shared_with (unless requester is the client or admin)
       let privacyQuery: any = {};
       if (!isAdmin && !isRequesterClient) {
-        if (requesterHasClientCases) {
-          privacyQuery = {
-            $or: [
-              { privacy: DocumentPrivacy.PUBLIC },
-              { privacy: DocumentPrivacy.PRIVATE },
-              {
-                privacy: DocumentPrivacy.FULLY_PRIVATE,
-                shared_with: requesterObjectId,
-              },
-            ],
-          };
-        } else {
-          privacyQuery = {
-            $or: [
-              { privacy: DocumentPrivacy.PUBLIC },
-              {
-                privacy: { $in: [DocumentPrivacy.PRIVATE, DocumentPrivacy.FULLY_PRIVATE] },
-                shared_with: requesterObjectId,
-              },
-            ],
-          };
-        }
+        privacyQuery = {
+          $or: [
+            { privacy: DocumentPrivacy.PUBLIC },
+            { privacy: DocumentPrivacy.PRIVATE, shared_with: requesterObjectId },
+            { privacy: "fully_private", shared_with: requesterObjectId },
+          ],
+        };
       }
 
       const matchQuery: any =
@@ -919,17 +1359,21 @@ export default class DocumentController {
       const documents = await UserDocument.find(matchQuery)
         .select("-file_base64")
         .sort({ created_at: -1, createdAt: -1, _id: -1 })
+        .populate('shared_with', 'first_name last_name email account_type profile_image')
         .lean();
+      const visibleDocs = documents.filter((d: any) =>
+        DocumentController.canAccessDocument(requesterId, requesterRole, d)
+      );
       DocumentController.logPerf("document.lawyerDocuments", t0, {
         clientId,
         status: status ?? null,
-        returned: documents.length,
+        returned: visibleDocs.length,
         requesterHasClientCases: Boolean(requesterHasClientCases),
       });
 
       res.json({
         success: true,
-        data: documents.map((d: any) => DocumentController.normalizeDocumentForUI(d)),
+        data: visibleDocs.map((d: any) => DocumentController.normalizeDocumentForUI(d)),
       });
     } catch (error: any) {
       console.error("Error fetching lawyer-visible client documents:", error);
@@ -981,14 +1425,18 @@ export default class DocumentController {
       }
 
       const documents = await UserDocument.find(query)
-        .populate('uploaded_by', 'first_name last_name email account_type')
-        .populate('shared_with', 'first_name last_name email account_type')
-        .sort({ created_at: -1 });
+        .select("-file_base64")
+        .sort({ created_at: -1 })
+        .populate('shared_with', 'first_name last_name email account_type profile_image')
+        .lean();
+      const visibleDocs = documents.filter((d: any) =>
+        DocumentController.canAccessDocument(requesterId, requesterRole, d)
+      );
 
       res.json({
         success: true,
-        documents: documents,
-        total: documents.length
+        documents: visibleDocs.map((d: any) => DocumentController.normalizeDocumentForUI(d)),
+        total: visibleDocs.length
       });
     } catch (error: any) {
       console.error('Error fetching case documents:', error);
@@ -1005,11 +1453,15 @@ export default class DocumentController {
   static async getDocumentById(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const requesterId = (req as any).id;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
       const requesterRole = (req as any).role;
 
       const document = await UserDocument.findById(id)
-        .populate('uploaded_by', 'first_name last_name email');
+        .populate('uploaded_by', 'first_name last_name email account_type profile_image')
+        .populate('shared_with', 'first_name last_name email account_type profile_image');
 
       if (!document) {
         return res.status(404).json({
@@ -1018,22 +1470,19 @@ export default class DocumentController {
         });
       }
 
-      // Security Check: Verify user has access to this document
-      const isOwner = document.uploaded_by && (document.uploaded_by as any)._id.toString() === requesterId;
-      const isPublic = document.privacy === DocumentPrivacy.PUBLIC;
-      const isShared = document.shared_with && document.shared_with.some(uid => uid.toString() === requesterId);
-      const isAdmin = requesterRole === 'admin';
-
-      if (!isOwner && !isPublic && !isShared && !isAdmin) {
-          return res.status(403).json({
-              success: false,
-              message: 'Access denied: You are not authorized to view this document'
-          });
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied",
+        });
       }
+
+      const docJson = document.toObject();
+      docJson.privacy = DocumentController.normalizeResponsePrivacy(docJson.privacy);
 
       res.json({
         success: true,
-        data: document
+        data: docJson
       });
     } catch (error: any) {
       console.error('Error fetching document:', error);
@@ -1051,6 +1500,8 @@ export default class DocumentController {
     try {
       const { id } = req.params;
       const { status } = req.body;
+      const requesterId = (req as any).id as string | undefined;
+      const requesterRole = (req as any).role as string | undefined;
 
       if (!['Pending', 'Approved', 'Rejected'].includes(status)) {
         return res.status(400).json({
@@ -1059,18 +1510,23 @@ export default class DocumentController {
         });
       }
 
-      const document = await UserDocument.findByIdAndUpdate(
-        id,
-        { status },
-        { new: true, runValidators: true }
-      ).populate('uploaded_by', 'first_name last_name email');
-
-      if (!document) {
+      const existing = await UserDocument.findById(id);
+      if (!existing) {
         return res.status(404).json({
           success: false,
           message: 'Document not found'
         });
       }
+
+      if (!DocumentController.canManageDocumentAccess(requesterId, requesterRole, existing)) {
+        return res.status(403).json({ success: false, message: 'Forbidden' });
+      }
+
+      const document = await UserDocument.findByIdAndUpdate(
+        id,
+        { status },
+        { new: true, runValidators: true }
+      ).populate('uploaded_by', 'first_name last_name email');
 
       res.json({
         success: true,
@@ -1108,13 +1564,9 @@ export default class DocumentController {
         });
       }
 
-      // Legal/privacy guard: lawyers cannot hard-delete documents from this endpoint.
-      if (requesterRole === "lawyer") {
-        return res.status(403).json({
-          success: false,
-          message: "Not allowed",
-        });
-      }
+      // The earlier blanket "lawyer" block was removed here.
+      // Lawyers should be allowed to delete their own documents. The ownership
+      // is securely verified below via `!isOwner && !isAdmin`.
 
       const existingDocument = await UserDocument.findById(id).select("_id uploaded_by");
       if (!existingDocument) {
@@ -1161,7 +1613,11 @@ export default class DocumentController {
    */
   static async getAccessibleDocuments(req: Request, res: Response) {
     try {
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
       const {
         privacy,
         status,
@@ -1188,9 +1644,18 @@ export default class DocumentController {
         ]
       };
 
-      // Apply filters
-      if (privacy) {
-        query.privacy = privacy;
+      // Apply filters (map legacy fully_private → private)
+      const privacyFilter = DocumentController.mapPrivacyFilterParam(privacy);
+      if (privacy && privacy !== "all" && !privacyFilter) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid privacy filter. Must be "public" or "private".',
+        });
+      }
+      if (privacyFilter) {
+        query.privacy = privacyFilter === DocumentPrivacy.PRIVATE
+          ? { $in: [DocumentPrivacy.PRIVATE, "fully_private"] }
+          : privacyFilter;
       }
       if (status) {
         query.status = status;
@@ -1202,6 +1667,9 @@ export default class DocumentController {
       // Calculate pagination
       const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
+      const requesterId = userId;
+      const requesterRole = (req as any).role;
+
       // Get documents with pagination
       const documents = await UserDocument.find(query)
         .populate('uploaded_by', 'first_name last_name email account_type')
@@ -1210,12 +1678,20 @@ export default class DocumentController {
         .skip(skip)
         .limit(parseInt(limit as string));
 
+      const accessibleDocuments = documents
+        .filter((d: any) => DocumentController.canAccessDocument(requesterId, requesterRole, d))
+        .map((d: any) => {
+          const plain = d.toObject ? d.toObject() : d;
+          plain.privacy = DocumentController.normalizeResponsePrivacy(plain.privacy);
+          return plain;
+        });
+
       // Get total count for pagination
-      const total = await UserDocument.countDocuments(query);
+      const total = accessibleDocuments.length;
 
       return res.status(200).json({
         success: true,
-        documents,
+        documents: accessibleDocuments,
         pagination: {
           current_page: parseInt(page as string),
           per_page: parseInt(limit as string),
@@ -1233,13 +1709,109 @@ export default class DocumentController {
   }
 
   /**
+   * GET /api/v1/document/:documentId/access-details
+   * Single payload for the Manage Access modal.
+   */
+  static async getDocumentAccessDetails(req: Request, res: Response) {
+    try {
+      const { documentId } = req.params;
+      const requesterId = (req as any).id as string | undefined;
+      const requesterRole = (req as any).role as string | undefined;
+
+      const document = await UserDocument.findById(documentId)
+        .populate("uploaded_by", "first_name last_name email account_type")
+        .populate("shared_with", "first_name last_name email account_type");
+
+      if (!document) {
+        return res.status(404).json({ success: false, message: "Document not found" });
+      }
+
+      if (!DocumentController.canManageDocumentAccess(requesterId, requesterRole, document)) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+
+      const ownerUser = document.uploaded_by as any;
+      const ownerId = ownerUser?._id?.toString?.() || document.uploaded_by?.toString?.() || "";
+      const sharedWith = (document.shared_with || []).map((u: any) =>
+        DocumentController.formatAccessUser(u)
+      );
+      const sharedIds = new Set(sharedWith.map((u) => u!._id));
+
+      const candidates = requesterRole === "admin"
+        ? await User.find(
+            { _id: { $ne: ownerId }, account_type: { $in: ["client", "lawyer"] } },
+            "first_name last_name email account_type"
+          )
+            .sort({ first_name: 1 })
+            .lean()
+        : await DocumentController.getGrantableCandidateUsers(requesterId!, requesterRole!);
+
+      const candidateSummaries = await Promise.all(
+        candidates
+          .map((u: any) => DocumentController.formatAccessUser(u))
+          .filter((u) => u && u._id !== ownerId)
+          .map(async (u) => {
+            const role = (requesterRole || "").toLowerCase();
+            let relationship: "own_client" | "own_lawyer" | "default_pool" = "default_pool";
+            if (role === "lawyer" && (await DocumentController.isOwnClient(requesterId!, u!._id))) {
+              relationship = "own_client";
+            } else if (role === "client" && (await DocumentController.isOwnLawyer(requesterId!, u!._id))) {
+              relationship = "own_lawyer";
+            }
+            return { ...u, relationship, is_own_client: relationship === "own_client", is_own_lawyer: relationship === "own_lawyer" };
+          })
+      );
+
+      const normalizedPrivacy = DocumentController.normalizeResponsePrivacy(document.privacy);
+      const isPublic = normalizedPrivacy === DocumentPrivacy.PUBLIC;
+      const hasAccessCount = isPublic
+        ? null
+        : candidateSummaries.filter((u) => sharedIds.has(u!._id)).length;
+      const grantableUsers = isPublic
+        ? []
+        : candidateSummaries.filter((u) => !sharedIds.has(u!._id));
+
+      return res.status(200).json({
+        success: true,
+        document: {
+          _id: document._id,
+          document_name: document.document_name,
+          privacy: normalizedPrivacy,
+          shared_with: sharedWith,
+          uploaded_by: DocumentController.formatAccessUser(ownerUser),
+        },
+        owner: DocumentController.formatAccessUser(ownerUser),
+        has_access_count: hasAccessCount,
+        does_not_have_access_count: isPublic ? null : grantableUsers.length,
+        grantable_users: grantableUsers,
+        allow_share_with_any_registered_user: true,
+        default_grant_pool:
+          (requesterRole || "").toLowerCase() === "lawyer"
+            ? "own_clients"
+            : (requesterRole || "").toLowerCase() === "client"
+              ? "own_lawyers"
+              : "all_users",
+        last_verified_at: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      console.error("Error getting document access details:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to get document access details",
+      });
+    }
+  }
+
+  /**
    * Share a private document with specific users (lawyers or clients)
    * Both lawyers and clients can share their private documents
    */
   static async shareDocument(req: Request, res: Response) {
     try {
       const { documentId } = req.params;
-      const { userId, userIds } = req.body;
+      const requesterId = (req as any).id as string | undefined;
+      const requesterRole = (req as any).role as string | undefined;
+      const { userIds } = req.body as { userIds?: string[] };
 
       // Validate input
       if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
@@ -1258,33 +1830,29 @@ export default class DocumentController {
         });
       }
 
-      // Check if user owns the document
-      if (document.uploaded_by.toString() !== userId) {
+      if (!DocumentController.canManageDocumentAccess(requesterId, requesterRole, document)) {
         return res.status(403).json({
           success: false,
-          message: 'You can only share your own documents'
+          message: 'Forbidden'
         });
       }
 
-      // Check if document is private (only private documents can be shared)
-      if (document.privacy !== DocumentPrivacy.PRIVATE) {
+      if (DocumentController.normalizeResponsePrivacy(document.privacy) !== DocumentPrivacy.PRIVATE) {
         return res.status(400).json({
           success: false,
-          message: 'Only private documents can be shared with other users'
+          message: 'Sharing is only allowed when document privacy is private',
         });
       }
 
-      // Verify all provided IDs are valid users (lawyers or clients)
-      const users = await User.find({
-        _id: { $in: userIds },
-        account_type: { $in: ['lawyer', 'client'] }
-      });
+      const ownerId = document.uploaded_by?.toString();
 
-      if (users.length !== userIds.length) {
-        return res.status(400).json({
-          success: false,
-          message: 'Some provided IDs are not valid users'
-        });
+      const shareCheck = await DocumentController.validateShareTargetUsers(
+        requesterId!,
+        userIds,
+        ownerId
+      );
+      if (shareCheck.ok === false) {
+        return res.status(400).json({ success: false, message: shareCheck.message });
       }
 
       // Share document with users
@@ -1292,7 +1860,30 @@ export default class DocumentController {
         documentId,
         { $addToSet: { shared_with: { $each: userIds } } },
         { new: true }
-      ).populate('shared_with', 'first_name last_name email account_type');
+      ).populate('shared_with', 'first_name last_name email account_type profile_image');
+
+      const now = new Date();
+      for (const targetUserId of userIds) {
+        await DocumentPermission.findOneAndUpdate(
+          { document_id: documentId, user_id: targetUserId },
+          {
+            $set: {
+              granted_by: requesterId,
+              granted_at: now,
+              revoked_at: null,
+              revoked_by: null,
+            }
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        await DocumentPermissionAuditLog.create({
+          document_id: documentId,
+          actor_id: requesterId,
+          action: "GRANT",
+          target_user_id: targetUserId,
+          new_value: { granted_at: now.toISOString() },
+        });
+      }
 
       return res.status(200).json({
         success: true,
@@ -1315,7 +1906,18 @@ export default class DocumentController {
   static async unshareDocument(req: Request, res: Response) {
     try {
       const { documentId } = req.params;
-      const { userId, lawyerId } = req.body;
+      const requesterId = (req as any).id as string | undefined;
+      const requesterRole = (req as any).role as string | undefined;
+      // Fix: Rename userId to targetUserId to prevent collision with the owner's ID
+      // Some old clients might send the target as lawyerId.
+      const { targetUserId, lawyerId } = req.body as {
+        targetUserId?: string;
+        lawyerId?: string;
+      };
+      const userToRemove = targetUserId || lawyerId;
+      if (!userToRemove) {
+        return res.status(400).json({ success: false, message: "targetUserId is required" });
+      }
 
       // Find the document
       const document = await UserDocument.findById(documentId);
@@ -1326,24 +1928,42 @@ export default class DocumentController {
         });
       }
 
-      // Check if user owns the document
-      if (document.uploaded_by.toString() !== userId) {
+      if (!DocumentController.canManageDocumentAccess(requesterId, requesterRole, document)) {
         return res.status(403).json({
           success: false,
-          message: 'You can only unshare your own documents'
+          message: 'Forbidden'
         });
       }
 
-      // Remove lawyer from shared_with array
+      if (DocumentController.normalizeResponsePrivacy(document.privacy) !== DocumentPrivacy.PRIVATE) {
+        return res.status(400).json({
+          success: false,
+          message: 'Unshare is only allowed when document privacy is private',
+        });
+      }
+
+      // Remove user from shared_with array
       const updatedDocument = await UserDocument.findByIdAndUpdate(
         documentId,
-        { $pull: { shared_with: lawyerId } },
+        { $pull: { shared_with: userToRemove } },
         { new: true }
-      ).populate('shared_with', 'first_name last_name email account_type');
+      ).populate('shared_with', 'first_name last_name email account_type profile_image');
+
+      await DocumentPermission.updateMany(
+        { document_id: documentId, user_id: userToRemove, revoked_at: null },
+        { $set: { revoked_at: new Date(), revoked_by: requesterId } }
+      );
+      await DocumentPermissionAuditLog.create({
+        document_id: documentId,
+        actor_id: requesterId,
+        action: "REVOKE",
+        target_user_id: userToRemove,
+      });
 
       return res.status(200).json({
         success: true,
         message: 'Document unshared successfully',
+        shared_with: updatedDocument?.shared_with ?? [],
         document: updatedDocument
       });
     } catch (error: any) {
@@ -1363,15 +1983,13 @@ export default class DocumentController {
   static async updateDocumentPrivacy(req: Request, res: Response) {
     try {
       const { documentId } = req.params;
-      const { userId, privacy } = req.body;
-
-      // Validate privacy value
-      if (!Object.values(DocumentPrivacy).includes(privacy)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid privacy setting. Must be "public" or "private"'
-        });
+      const requesterId = (req as any).id as string | undefined;
+      const requesterRole = (req as any).role as string | undefined;
+      const privacyParsed = DocumentController.parsePrivacyInput(req.body.privacy);
+      if (privacyParsed.ok === false) {
+        return res.status(privacyParsed.status).json({ success: false, message: privacyParsed.message });
       }
+      const privacy = privacyParsed.value;
 
       // Find the document
       const document = await UserDocument.findById(documentId);
@@ -1382,31 +2000,18 @@ export default class DocumentController {
         });
       }
 
-      // Check if user owns the document
-      if (document.uploaded_by.toString() !== userId) {
+      if (!DocumentController.canManageDocumentAccess(requesterId, requesterRole, document)) {
         return res.status(403).json({
           success: false,
-          message: 'You can only modify your own documents'
+          message: 'Forbidden'
         });
       }
 
-      // Get user to check role
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({ success: false, message: "User not found" });
-      }
-
-      // Both lawyers and clients can set documents to any privacy level (removed restriction)
-      // if (user.account_type === 'lawyer' && privacy === DocumentPrivacy.PRIVATE) {
-      //   return res.status(403).json({
-      //     success: false,
-      //     message: 'Lawyers cannot create private documents'
-      //   });
-      // }
-
-      // If changing from private to public, clear shared_with array
-      const updateData: any = { privacy };
-      if (privacy === DocumentPrivacy.PUBLIC && document.privacy === DocumentPrivacy.PRIVATE) {
+      const updateData: any = {
+        privacy,
+        privacy_level: DocumentController.toPrivacyLevel(privacy),
+      };
+      if (privacy === DocumentPrivacy.PUBLIC) {
         updateData.shared_with = [];
       }
 
@@ -1417,6 +2022,20 @@ export default class DocumentController {
         { new: true }
       ).populate('uploaded_by', 'first_name last_name email account_type')
         .populate('shared_with', 'first_name last_name email account_type');
+
+      await DocumentPermissionAuditLog.create({
+        document_id: documentId,
+        actor_id: requesterId,
+        action: "PRIVACY_UPDATE",
+        old_value: {
+          privacy: document.privacy,
+          privacy_level: document.privacy_level || DocumentController.toPrivacyLevel(document.privacy),
+        },
+        new_value: {
+          privacy: updatedDocument?.privacy,
+          privacy_level: (updatedDocument as any)?.privacy_level,
+        },
+      });
 
       return res.status(200).json({
         success: true,
@@ -1438,9 +2057,11 @@ export default class DocumentController {
    */
   static async getLawyersForSharing(req: Request, res: Response) {
     try {
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      // Get user to check role
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({ success: false, message: "User not found" });
@@ -1479,9 +2100,11 @@ export default class DocumentController {
    */
   static async getUsersForSharing(req: Request, res: Response) {
     try {
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      // Get current user to check role
       const currentUser = await User.findById(userId);
       if (!currentUser) {
         return res.status(404).json({ success: false, message: "User not found" });
@@ -1521,9 +2144,12 @@ export default class DocumentController {
   static async getDocumentSharingDetails(req: Request, res: Response) {
     try {
       const { documentId } = req.params;
-      const { userId } = req.body;
+      const userId = DocumentController.getAuthUserId(req);
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      const requesterRole = (req as any).role;
 
-      // Find the document
       const document = await UserDocument.findById(documentId)
         .populate('uploaded_by', 'first_name last_name email account_type')
         .populate('shared_with', 'first_name last_name email account_type profile_image');
@@ -1535,12 +2161,7 @@ export default class DocumentController {
         });
       }
 
-      // Check if user has access to this document
-      const hasAccess =
-        document.uploaded_by._id.toString() === userId ||
-        document.shared_with.some((lawyer: any) => lawyer._id.toString() === userId);
-
-      if (!hasAccess) {
+      if (!(await DocumentController.canAccessDocumentAsync(userId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
           message: 'You do not have access to this document'
@@ -2132,25 +2753,22 @@ export default class DocumentController {
   static async viewDocument(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const requesterId = (req as any).id;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
       const requesterRole = (req as any).role;
 
-      const document = await UserDocument.findById(id);
+      const document = await UserDocument.findById(id).populate('uploaded_by', '_id').populate('shared_with', '_id');
 
       if (!document) {
         return res.status(404).json({ success: false, message: 'Document not found' });
       }
 
-      // Security: verify access
-      const isOwner = document.uploaded_by?.toString() === requesterId;
-      const isPublic = document.privacy === DocumentPrivacy.PUBLIC;
-      const isShared = document.shared_with?.some(uid => uid.toString() === requesterId);
-      const isAdmin = requesterRole === 'admin';
-
-      if (!isOwner && !isPublic && !isShared && !isAdmin) {
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
-          message: 'Access denied: You are not authorized to view this document'
+          message: "Access denied",
         });
       }
 
@@ -2188,16 +2806,28 @@ export default class DocumentController {
   static async generateSecureLink(req: Request, res: Response) {
     try {
       const { documentId, fileId } = req.body;
-      const targetId = documentId || fileId; // Frontend currently sends `fileId`
-      
+      const targetId = documentId || fileId;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      const requesterRole = (req as any).role;
+
       if (!targetId) {
-         return res.status(400).json({ success: false, message: 'documentId or fileId is required' });
+        return res.status(400).json({ success: false, message: 'documentId or fileId is required' });
       }
 
       const document = await UserDocument.findById(targetId);
 
       if (!document) {
         return res.status(404).json({ success: false, message: 'Document not found' });
+      }
+
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied",
+        });
       }
 
       // Generate a secure link format the frontend expects
@@ -2223,10 +2853,13 @@ export default class DocumentController {
   static async downloadDocument(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const requesterId = (req as any).id;
+      const requesterId = DocumentController.getAuthUserId(req);
+      if (!requesterId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
       const requesterRole = (req as any).role;
 
-      const document = await UserDocument.findById(id);
+      const document = await UserDocument.findById(id).populate('uploaded_by', '_id').populate('shared_with', '_id');
 
       if (!document) {
         return res.status(404).json({
@@ -2235,16 +2868,10 @@ export default class DocumentController {
         });
       }
 
-      // Security: verify access
-      const isOwner = document.uploaded_by?.toString() === requesterId;
-      const isPublic = document.privacy === DocumentPrivacy.PUBLIC;
-      const isShared = document.shared_with?.some(uid => uid.toString() === requesterId);
-      const isAdmin = requesterRole === 'admin';
-
-      if (!isOwner && !isPublic && !isShared && !isAdmin) {
+      if (!(await DocumentController.canAccessDocumentAsync(requesterId, requesterRole, document))) {
         return res.status(403).json({
           success: false,
-          message: 'Access denied: You are not authorized to download this document'
+          message: "Access denied",
         });
       }
 

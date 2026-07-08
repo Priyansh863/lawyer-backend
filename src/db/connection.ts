@@ -2,10 +2,14 @@ import mongoose from "mongoose";
 import dbConfig from "../config/secretManagerConfig";
 
 import { ISecretManagerData } from "../Interfaces/commonInterfaces";
+import { setEncryptionKey } from "../utils/mongooseEncryption";
 
 const dataBaseConfig = async () => {
   try {
     const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
+    if (dbData.cryptoKey) {
+      setEncryptionKey(dbData.cryptoKey);
+    }
     console.log("Connecting to MongoDB...");
     await mongoose.connect(dbData.mongoUri as string);
     console.log("MongoDB connection established successfully");

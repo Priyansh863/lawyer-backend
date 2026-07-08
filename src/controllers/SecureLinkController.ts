@@ -9,6 +9,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import dbConfig from '../config/secretManagerConfig';
 import { ISecretManagerData } from '../Interfaces/commonInterfaces';
+import { getJwtSecret } from '../utils/jwtSecret';
 
 // Define AuthenticatedRequest interface
 interface AuthenticatedRequest extends Request {
@@ -257,8 +258,7 @@ class SecureLinkController {
         return;
       }
 
-      const authUser = await SecureLinkController.getOptionalAuthUser(req);
-      const requiresSignup = secureLink.mode === "non_customer" && !authUser;
+      const requiresSignup = false;
       const clientLabel = SecureLinkController.getClientLabel(secureLink);
 
       res.status(200).json({
@@ -347,35 +347,26 @@ class SecureLinkController {
         return;
       }
 
+      // Non-customer mode now allows anonymous recipients (no app signup/login required).
       const authUser = await SecureLinkController.getOptionalAuthUser(req);
-      if (secureLink.mode === "non_customer" && !authUser) {
-        SecureLinkController.recordAuthFailure(req, token);
-        console.log("[audit] secure-link auth blocked", {
-          reason: "signup_or_login_required",
-          link_id: secureLink._id.toString(),
-          mode: secureLink.mode,
-          ip: req.ip || null,
-        });
-        res.status(401).json({
-          success: false,
-          message: "Signup/login required for non-customer secure link",
-        });
-        return;
-      }
       SecureLinkController.clearAuthFailures(req, token);
 
       // Generate temporary upload token (valid for 1 hour)
+      const jwtSecret = await getJwtSecret();
       const uploadToken = jwt.sign(
         {
           link_id: secureLink._id,
           lawyer_id: secureLink.lawyer_id,
           client_id: secureLink.client_id || null,
           mode: secureLink.mode,
-          authenticated_user_id: authUser?.userId || secureLink.client_id?.toString?.() || null,
+          authenticated_user_id:
+            secureLink.mode === "non_customer"
+              ? (authUser?.userId || null)
+              : (authUser?.userId || secureLink.client_id?.toString?.() || null),
           type: 'secure_upload_auth',
           expires_at: secureLink.expires_at
         },
-        process.env.JWT_SECRET || 'your-secret-key',
+        jwtSecret,
         { expiresIn: '1h' }
       );
 
@@ -421,7 +412,8 @@ class SecureLinkController {
       // Verify upload token
       let decoded: any;
       try {
-        decoded = jwt.verify(upload_token, process.env.JWT_SECRET || 'your-secret-key');
+        const jwtSecret = await getJwtSecret();
+        decoded = jwt.verify(upload_token, jwtSecret);
       } catch (error) {
         res.status(401).json({
           success: false,
@@ -468,37 +460,11 @@ class SecureLinkController {
         return;
       }
 
-      const authUser = await SecureLinkController.getOptionalAuthUser(req);
-      if (secureLink.mode === "non_customer") {
-        if (!authUser) {
-          console.log("[audit] secure-link upload blocked", {
-            reason: "auth_required_non_customer",
-            link_id: secureLink._id.toString(),
-          });
-          res.status(401).json({
-            success: false,
-            message: "Authentication required for non-customer upload",
-          });
-          return;
-        }
-        if (decoded.authenticated_user_id !== authUser.userId) {
-          console.log("[audit] secure-link upload blocked", {
-            reason: "authenticated_user_mismatch",
-            link_id: secureLink._id.toString(),
-            decoded_user: decoded.authenticated_user_id || null,
-            request_user: authUser.userId,
-          });
-          res.status(403).json({
-            success: false,
-            message: "Upload token does not match authenticated user",
-          });
-          return;
-        }
-      }
+      // Non-customer mode allows anonymous upload; no JWT identity binding required.
 
       const uploadOwnerId =
         secureLink.mode === "non_customer"
-          ? decoded.authenticated_user_id
+          ? (decoded.authenticated_user_id || decoded.lawyer_id)
           : decoded.client_id;
       if (!uploadOwnerId || !mongoose.Types.ObjectId.isValid(String(uploadOwnerId))) {
         console.log("[audit] secure-link upload blocked", {

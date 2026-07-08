@@ -1,140 +1,102 @@
 import crypto from "crypto";
+import { Schema } from "mongoose";
 
-import dbConfig from "../config/secretManagerConfig";
-import type { ISecretManagerData } from "../Interfaces/commonInterfaces";
+const ENC_PREFIX = "enc:v1:";
+let encryptionKey: string | null = null;
 
-const ALGORITHM = "aes-256-cbc";
-
-let SECRET_KEY: Buffer | null = null;
-let secretKeyPromise: Promise<Buffer> | null = null;
-
-const getSecretKey = async (): Promise<Buffer> => {
-  if (SECRET_KEY) {
-    return SECRET_KEY;
+export function setEncryptionKey(key: string): void {
+  if (key && key.trim()) {
+    encryptionKey = key.trim();
   }
+}
 
-  if (!secretKeyPromise) {
-    secretKeyPromise = dbConfig
-      .secretManagerConnection()
-      .then((data: ISecretManagerData) => {
-        const key =
-          data?.encryptionKey ||
-          process.env.ENCRYPTION_KEY ||
-          process.env.MESSAGE_SECRET;
-
-        if (!key) {
-          throw new Error(
-            "Missing encryptionKey in AWS Secrets Manager and environment variables"
-          );
-        }
-
-        SECRET_KEY = crypto.createHash("sha256").update(key).digest();
-        return SECRET_KEY;
-      })
-      .catch((error) => {
-        secretKeyPromise = null;
-        throw error;
-      });
+function getKeyBuffer(): Buffer {
+  if (!encryptionKey) {
+    throw new Error("Encryption key not initialized");
   }
+  return crypto.createHash("sha256").update(encryptionKey).digest();
+}
 
-  return secretKeyPromise;
-};
+export function encryptField(value?: string | null): string | undefined | null {
+  if (value === undefined || value === null || value === "") {
+    return value as string | undefined | null;
+  }
+  if (!encryptionKey) {
+    return value;
+  }
+  if (typeof value === "string" && value.startsWith(ENC_PREFIX)) {
+    return value;
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", getKeyBuffer(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const payload = Buffer.concat([iv, tag, encrypted]).toString("base64");
+  return `${ENC_PREFIX}${payload}`;
+}
 
-/* =========================
-   🔐 Encrypt / Decrypt
-========================= */
-
-export const encrypt = async (text?: string): Promise<string | undefined> => {
-  if (!text) return text;
-
-  const key = await getSecretKey();
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-
-  let encrypted = cipher.update(text, "utf8", "hex");
-  encrypted += cipher.final("hex");
-
-  return iv.toString("hex") + ":" + encrypted;
-};
-
-export const decrypt = async (text?: string): Promise<string | undefined> => {
-  if (!text) return text;
-
+export function decryptField(value?: string | null): string | undefined | null {
+  if (value === undefined || value === null || value === "") {
+    return value as string | undefined | null;
+  }
+  if (typeof value !== "string" || !value.startsWith(ENC_PREFIX)) {
+    return value;
+  }
+  if (!encryptionKey) {
+    return value;
+  }
   try {
-    const [ivHex, encrypted] = text.split(":");
-    const key = await getSecretKey();
-
-    const iv = Buffer.from(ivHex, "hex");
-    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-
-    return decrypted;
+    const raw = Buffer.from(value.slice(ENC_PREFIX.length), "base64");
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(12, 28);
+    const encrypted = raw.subarray(28);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", getKeyBuffer(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
   } catch {
-    return text;
+    return value;
   }
-};
+}
 
-/* =========================
-   🧠 Apply Encryption Plugin
-========================= */
+function decryptDocFields(doc: any, fields: string[]): void {
+  if (!doc) return;
+  for (const field of fields) {
+    if (doc[field]) {
+      doc[field] = decryptField(doc[field]);
+    }
+  }
+}
 
-export const applyEncryption = (schema: any, fields: string[]) => {
-  /* 🔐 Encrypt on save */
-  schema.pre("save", async function () {
-    await Promise.all(
-      fields.map(async (f) => {
-        if (this.isModified(f)) {
-          this[f] = await encrypt(this[f]);
+export function applyFieldEncryption(schema: Schema, fields: string[]): void {
+  schema.pre("save", function (next) {
+    try {
+      for (const field of fields) {
+        if (this.isModified(field) && this.get(field)) {
+          this.set(field, encryptField(this.get(field)));
         }
-      })
-    );
+      }
+      next();
+    } catch (error) {
+      next(error as Error);
+    }
   });
 
-  /* 🔐 Encrypt on update queries */
-  const encryptUpdate = async function () {
-    const update = this.getUpdate();
-    if (!update) return;
-
-    await Promise.all(
-      fields.map(async (f) => {
-        if (update[f] != null) {
-          update[f] = await encrypt(update[f]);
-        }
-        if (update.$set && update.$set[f] != null) {
-          update.$set[f] = await encrypt(update.$set[f]);
-        }
-      })
-    );
-  };
-
-  schema.pre("findOneAndUpdate", encryptUpdate);
-  schema.pre("updateOne", encryptUpdate);
-  schema.pre("updateMany", encryptUpdate);
-
-  /* 🔓 Decrypt after read */
-  const decryptDoc = async (doc: any) => {
-    if (!doc) return;
-
-    await Promise.all(
-      fields.map(async (f) => {
-        doc[f] = await decrypt(doc[f]);
-      })
-    );
-  };
-
-  schema.post("find", async function (docs: any[]) {
-    await Promise.all(docs.map(decryptDoc));
+  schema.post("find", function (docs: any[]) {
+    if (Array.isArray(docs)) {
+      docs.forEach((doc) => decryptDocFields(doc, fields));
+    }
   });
 
-  schema.post("findOne", async function (doc: any) {
-    await decryptDoc(doc);
+  schema.post("findOne", function (doc: any) {
+    decryptDocFields(doc, fields);
   });
-  schema.post("findOneAndUpdate", async function (doc: any) {
-    await decryptDoc(doc);
+
+  schema.post("findOneAndUpdate", function (doc: any) {
+    decryptDocFields(doc, fields);
   });
-  schema.post("findOneAndDelete", async function (doc: any) {
-    await decryptDoc(doc);
-  });
-};
+}
+
+/** Legacy aliases used by migration scripts (e.g. encryptHistoricalData.ts). */
+export const encrypt = encryptField;
+export const decrypt = decryptField;
+export const applyEncryption = applyFieldEncryption;

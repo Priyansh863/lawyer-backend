@@ -70,7 +70,6 @@ export interface ISecretManagerData {
   inAppSecretCode: string;
   googleServiceEmail: string;
   googleServicePrivateKey: string
-  encryptionKey: string;
 }
 
 // Header interface

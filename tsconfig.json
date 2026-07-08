@@ -6,8 +6,22 @@
     "moduleResolution": "node",
     "sourceMap": true,
     "outDir": "./src/dist",
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "skipLibCheck": true
   },
-  "exclude": ["./node_modules"],
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "./node_modules",
+    "./encryptHistoricalData.ts",
+    "./check_*.ts",
+    "./inspect_*.ts",
+    "./src/**/*_backup.ts",
+    "./src/controllers/EnhancedCaseController.ts",
+    "./src/controllers/DocumentControllerEnhanced.ts",
+    "./src/controllers/EnhancedDocumentController.ts",
+    "./src/controllers/QuestionControllerFixed.ts",
+    "./src/utils/fcmNotification.ts",
+    "./src/migrations/**"
+  ],
   "lib": ["es2015"]
 }
