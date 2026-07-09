@@ -35,7 +35,6 @@ const secretManagerConnection = async () => {
       if (SecretString) {
         console.log("Secret keys fetched successfully from AWS Secrets Manager");
         secretManagerKeys = JSON.parse(SecretString);
-        console.log("Secret keys:", secretManagerKeys);
         return secretManagerKeys;
       } else {
         throw new Error("No secret string found in AWS Secrets Manager");

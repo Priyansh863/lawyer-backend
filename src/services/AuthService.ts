@@ -40,7 +40,6 @@ class AuthServices {
   async login(data: LoginData) {
     const { email, password, pcId } = data;
     const query = { email: email.toLowerCase() };
-    console.log("Login data:>>>>>>>>>>>>>>>", data);
     
     // First check if user exists
     const userInfo = await User.findOne(query);
@@ -121,10 +120,8 @@ class AuthServices {
         }
         
         // All checks passed - PC ID matches and license is active
-        console.log("PC login validated successfully for user:", email);
       } else {
         // No pcId provided - this is a website login, proceed normally
-        console.log("Website login for user:", email);
       }
       
       // Generate a JWT token
@@ -151,15 +148,11 @@ class AuthServices {
    * Admin Login
    */
   async adminLogin(data: LoginData) {
-    console.log("Admin Login data:>>>>>>>>>>>>>>>", data);
     const { email, password } = data;
     const query = { email: email.toLowerCase() };
-
-    console.log("Admin Login data:>>>>>>>>>>>>>>>", query);
     
     // Find user
     const userInfo = await User.findOne(query);
-    console.log("Admin Login userInfo:>>>>>>>>>>>>>>>", userInfo);
 
     if (!userInfo) {
       return { success: false, message: "user_not_found" };
@@ -210,7 +203,6 @@ class AuthServices {
 
     // Generate OTP and set expiration (10 minutes from now)
     const otp = this.generateOtp();
-    console.log("otp>>>>>>>>>>>>signup", otp);
 
     const otpExpires = new Date();
     otpExpires.setMinutes(otpExpires.getMinutes() + 10);
@@ -296,7 +288,6 @@ class AuthServices {
 
     // Generate new OTP
     const otp = this.generateOtp();
-    console.log("otp>>>>>>>>>>>>", otp);
     const otpExpires = new Date();
     otpExpires.setMinutes(otpExpires.getMinutes() + 10);
 
@@ -694,7 +685,6 @@ class AuthServices {
       const checkSocialIdExists = await User.findOne(socialIdQuery).populate(
         "member_information"
       );
-      console.log("apple login email id", checkSocialIdExists);
       if (checkSocialIdExists && checkSocialIdExists.is_active) {
         const user = checkSocialIdExists;
         const tokenResult = await createToken(user);
@@ -750,7 +740,6 @@ class AuthServices {
       const json: {
         kid: string;
       } = jwt_decode(identityToken, { header: true });
-      console.log(json.kid);
       const kid = json.kid;
 
       const appleKey = await this.getAppleSigningKey(kid);
@@ -818,7 +807,6 @@ class AuthServices {
           const checkSocialIdExists = await User.findOne(
             socialIdQuery
           ).populate("member_information");
-          console.log("apple login email id(else)", checkSocialIdExists);
           if (checkSocialIdExists.is_active) {
             const user = checkSocialIdExists;
             const tokenResult = jwt.sign({ _id: user._id, email: user.email, account_type: user.account_type }, dbData.jwtSecretKey as string, { expiresIn: "1y" });
@@ -852,7 +840,6 @@ class AuthServices {
       "member_information"
     );
     let returnOp = {};
-    console.log("checksocialid social login", checkSocialIdExists);
     // signup user or user login with social account first time
     if (!isEmpty(checkSocialIdExists)) {
       // sign in for that user
@@ -896,7 +883,6 @@ class AuthServices {
         // signup user or user login with social account first time
         if (userData) {
           // sign in for that user
-          console.log("userdata", userData);
           user = userData;
           const tokenResult = await createToken(userData);
           returnOp = {
@@ -923,9 +909,6 @@ class AuthServices {
     
     try {
       const dbData = await dbConfig.secretManagerConnection();
-      console.log("----------oooooooooooooooooo:");
-      
-      console.log("Token received:",  dbData.jwtSecretKey);
       // Verify and decode the JWT token
       const decoded = jwt.verify(token, dbData.jwtSecretKey) as any;
       

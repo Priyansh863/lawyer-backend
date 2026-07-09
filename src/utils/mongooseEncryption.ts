@@ -35,11 +35,39 @@ export function encryptField(value?: string | null): string | undefined | null {
   return `${ENC_PREFIX}${payload}`;
 }
 
+function decryptLegacyField(value: string): string | undefined {
+  try {
+    const parts = value.split(":");
+    if (parts.length !== 2) return undefined;
+    const [ivHex, encryptedHex] = parts;
+    if (ivHex.length !== 32) return undefined; // 16 bytes IV is 32 hex chars
+
+    const decipher = crypto.createDecipheriv("aes-256-cbc", getKeyBuffer(), Buffer.from(ivHex, "hex"));
+    let decrypted = decipher.update(encryptedHex, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch {
+    return undefined;
+  }
+}
+
 export function decryptField(value?: string | null): string | undefined | null {
   if (value === undefined || value === null || value === "") {
     return value as string | undefined | null;
   }
-  if (typeof value !== "string" || !value.startsWith(ENC_PREFIX)) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  if (!value.startsWith(ENC_PREFIX)) {
+    if (!encryptionKey) {
+      return value;
+    }
+    if (value.includes(":")) {
+      const legacyDecrypted = decryptLegacyField(value);
+      if (legacyDecrypted !== undefined) {
+        return legacyDecrypted;
+      }
+    }
     return value;
   }
   if (!encryptionKey) {
@@ -81,6 +109,32 @@ export function applyFieldEncryption(schema: Schema, fields: string[]): void {
     }
   });
 
+  /* 🔐 Encrypt on update queries */
+  const encryptUpdate = function (this: any, next: any) {
+    try {
+      const update = this.getUpdate();
+      if (!update) {
+        return next();
+      }
+
+      for (const field of fields) {
+        if (update[field] !== undefined && update[field] !== null) {
+          update[field] = encryptField(update[field]);
+        }
+        if (update.$set && update.$set[field] !== undefined && update.$set[field] !== null) {
+          update.$set[field] = encryptField(update.$set[field]);
+        }
+      }
+      next();
+    } catch (error) {
+      next(error as Error);
+    }
+  };
+
+  schema.pre("findOneAndUpdate", encryptUpdate);
+  schema.pre("updateOne", encryptUpdate);
+  schema.pre("updateMany", encryptUpdate);
+
   schema.post("find", function (docs: any[]) {
     if (Array.isArray(docs)) {
       docs.forEach((doc) => decryptDocFields(doc, fields));
@@ -92,6 +146,10 @@ export function applyFieldEncryption(schema: Schema, fields: string[]): void {
   });
 
   schema.post("findOneAndUpdate", function (doc: any) {
+    decryptDocFields(doc, fields);
+  });
+
+  schema.post("findOneAndDelete", function (doc: any) {
     decryptDocFields(doc, fields);
   });
 }

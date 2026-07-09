@@ -10,7 +10,7 @@ class OpenAIUtils {
   private initialized: boolean = false;
 
   constructor() {
-    this.initPromise = this.init();
+    // Lazy initialize to avoid running async code during import / test bootstrap
   }
 
   private async init(): Promise<void> {
@@ -36,12 +36,15 @@ class OpenAIUtils {
   }
 
   private async ensureInitialized(): Promise<void> {
+    if (!this.initialized && !this.initPromise) {
+      this.initPromise = this.init();
+    }
     if (this.initPromise) {
       try {
         await this.initPromise;
       } catch (error) {
-        this.initPromise = this.init();
-        await this.initPromise;
+        this.initPromise = null;
+        throw error;
       }
       this.initPromise = null;
     }
