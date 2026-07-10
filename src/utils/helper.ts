@@ -94,7 +94,6 @@ class Helper {
             Bucket: bucket,
             Key: filePath,
             ContentType: fileFormat,
-            ACL: "public-read",
           });
           const url = await getSignedUrl(s3Client, command, {
             expiresIn: 3600,

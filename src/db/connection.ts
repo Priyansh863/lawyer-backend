@@ -7,9 +7,10 @@ import { setEncryptionKey } from "../utils/mongooseEncryption";
 const dataBaseConfig = async () => {
   try {
     const dbData = await dbConfig.secretManagerConnection() as ISecretManagerData;
-    if (dbData.cryptoKey) {
-      setEncryptionKey(dbData.cryptoKey);
+    if (!dbData || !dbData.cryptoKey || !dbData.cryptoKey.trim()) {
+      throw new Error("Required encryption key (cryptoKey) is missing from Secrets Manager configuration");
     }
+    setEncryptionKey(dbData.cryptoKey);
     console.log("Connecting to MongoDB...");
     await mongoose.connect(dbData.mongoUri as string);
     console.log("MongoDB connection established successfully");

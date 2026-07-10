@@ -11,6 +11,7 @@ import { envData } from "../Interfaces/commonInterfaces";
 
 import { fromIni } from "@aws-sdk/credential-providers";
 import { compressBase64 } from "./documentUtils";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 
 const { region, env, awsConfigureProfile }: envData = envConfig();
@@ -204,3 +205,26 @@ export const deleteFileFromS3 = async (filePathArray: string[]) => {
     throw error;
   }
 };
+
+/**
+ * Generate a short-lived (60s) presigned GET URL for a private S3 URL.
+ * Returns the original URL if it's not a valid S3 URL or if generation fails.
+ */
+export async function getShortLivedPresignedGetUrl(fileUrl: string): Promise<string> {
+  const parsed = parseS3ObjectUrl(fileUrl);
+  if (!parsed) {
+    return fileUrl;
+  }
+  try {
+    const command = new GetObjectCommand({
+      Bucket: parsed.bucket,
+      Key: parsed.key,
+    });
+    return await getSignedUrl(s3Client, command, {
+      expiresIn: 60,
+    });
+  } catch (error) {
+    console.error("Error generating presigned GET URL:", error);
+    return fileUrl;
+  }
+}

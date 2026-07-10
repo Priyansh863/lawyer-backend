@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { uploadImg, ingestS3UploadToStoredBase64, roundTripBase64ViaS3ToStoredBase64 } from "../utils/fileUpload";
+import { uploadImg, ingestS3UploadToStoredBase64, roundTripBase64ViaS3ToStoredBase64, getShortLivedPresignedGetUrl } from "../utils/fileUpload";
 import UserDocument, { DocumentPrivacy, DocumentPrivacyLevel, DocumentStatus, DocumentType, StorageType } from "../models/user_documents";
 import AIService from "../services/AIService";
 import { isPDFFile } from "../utils/pdfUtils";
@@ -1855,41 +1855,55 @@ export default class DocumentController {
         return res.status(400).json({ success: false, message: shareCheck.message });
       }
 
-      // Share document with users
-      const updatedDocument = await UserDocument.findByIdAndUpdate(
-        documentId,
-        { $addToSet: { shared_with: { $each: userIds } } },
-        { new: true }
-      ).populate('shared_with', 'first_name last_name email account_type profile_image');
+      // Share document with users via transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      try {
+        const updatedDocument = await UserDocument.findByIdAndUpdate(
+          documentId,
+          { $addToSet: { shared_with: { $each: userIds } } },
+          { new: true, session }
+        ).populate('shared_with', 'first_name last_name email account_type profile_image');
 
-      const now = new Date();
-      for (const targetUserId of userIds) {
-        await DocumentPermission.findOneAndUpdate(
-          { document_id: documentId, user_id: targetUserId },
-          {
-            $set: {
-              granted_by: requesterId,
-              granted_at: now,
-              revoked_at: null,
-              revoked_by: null,
-            }
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
-        await DocumentPermissionAuditLog.create({
-          document_id: documentId,
-          actor_id: requesterId,
-          action: "GRANT",
-          target_user_id: targetUserId,
-          new_value: { granted_at: now.toISOString() },
+        const now = new Date();
+        for (const targetUserId of userIds) {
+          await DocumentPermission.findOneAndUpdate(
+            { document_id: documentId, user_id: targetUserId },
+            {
+              $set: {
+                granted_by: requesterId,
+                granted_at: now,
+                revoked_at: null,
+                revoked_by: null,
+              }
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true, session }
+          );
+          await DocumentPermissionAuditLog.create(
+            [{
+              document_id: documentId,
+              actor_id: requesterId,
+              action: "GRANT",
+              target_user_id: targetUserId,
+              new_value: { granted_at: now.toISOString() },
+            }],
+            { session }
+          );
+        }
+
+        await session.commitTransaction();
+        session.endSession();
+
+        return res.status(200).json({
+          success: true,
+          message: 'Document shared successfully',
+          document: updatedDocument
         });
+      } catch (err: any) {
+        await session.abortTransaction();
+        session.endSession();
+        throw err;
       }
-
-      return res.status(200).json({
-        success: true,
-        message: 'Document shared successfully',
-        document: updatedDocument
-      });
     } catch (error: any) {
       console.error('Error sharing document:', error);
       return res.status(500).json({
@@ -1942,30 +1956,46 @@ export default class DocumentController {
         });
       }
 
-      // Remove user from shared_with array
-      const updatedDocument = await UserDocument.findByIdAndUpdate(
-        documentId,
-        { $pull: { shared_with: userToRemove } },
-        { new: true }
-      ).populate('shared_with', 'first_name last_name email account_type profile_image');
+      // Remove user from shared_with array via transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      try {
+        const updatedDocument = await UserDocument.findByIdAndUpdate(
+          documentId,
+          { $pull: { shared_with: userToRemove } },
+          { new: true, session }
+        ).populate('shared_with', 'first_name last_name email account_type profile_image');
 
-      await DocumentPermission.updateMany(
-        { document_id: documentId, user_id: userToRemove, revoked_at: null },
-        { $set: { revoked_at: new Date(), revoked_by: requesterId } }
-      );
-      await DocumentPermissionAuditLog.create({
-        document_id: documentId,
-        actor_id: requesterId,
-        action: "REVOKE",
-        target_user_id: userToRemove,
-      });
+        await DocumentPermission.updateMany(
+          { document_id: documentId, user_id: userToRemove, revoked_at: null },
+          { $set: { revoked_at: new Date(), revoked_by: requesterId } },
+          { session }
+        );
+        await DocumentPermissionAuditLog.create(
+          [{
+            document_id: documentId,
+            actor_id: requesterId,
+            action: "REVOKE",
+            target_user_id: userToRemove,
+            new_value: { revoked_at: new Date().toISOString() },
+          }],
+          { session }
+        );
 
-      return res.status(200).json({
-        success: true,
-        message: 'Document unshared successfully',
-        shared_with: updatedDocument?.shared_with ?? [],
-        document: updatedDocument
-      });
+        await session.commitTransaction();
+        session.endSession();
+
+        return res.status(200).json({
+          success: true,
+          message: 'Document unshared successfully',
+          shared_with: updatedDocument?.shared_with ?? [],
+          document: updatedDocument
+        });
+      } catch (err: any) {
+        await session.abortTransaction();
+        session.endSession();
+        throw err;
+      }
     } catch (error: any) {
       console.error('Error unsharing document:', error);
       return res.status(500).json({
@@ -2775,6 +2805,8 @@ export default class DocumentController {
       let fileUrl = document.link;
       if (document.file_base64) {
         fileUrl = decompressBase64(document.file_base64);
+      } else if (fileUrl) {
+        fileUrl = await getShortLivedPresignedGetUrl(fileUrl);
       }
 
       if (!fileUrl) {
@@ -2891,12 +2923,13 @@ export default class DocumentController {
 
       // Fallback: return the link if no base64 stored
       if (document.link) {
+        const presignedUrl = await getShortLivedPresignedGetUrl(document.link);
         return res.status(200).json({
           success: true,
           document_name: document.document_name,
           file_type: document.file_type,
-          link: document.link,
-          url: document.link
+          link: presignedUrl,
+          url: presignedUrl
         });
       }
 

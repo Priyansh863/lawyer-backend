@@ -239,6 +239,11 @@ class AdminDocumentPermissionController {
       };
       if (privacyLegacy === "public") {
         updatePayload.shared_with = [];
+        // Revoke all active permissions when transitioning to public
+        await DocumentPermission.updateMany(
+          { document_id: id, revoked_at: null },
+          { $set: { revoked_at: new Date(), revoked_by: adminUserId } }
+        );
       }
 
       const updated = await UserDocument.findByIdAndUpdate(

@@ -7,6 +7,8 @@ let encryptionKey: string | null = null;
 export function setEncryptionKey(key: string): void {
   if (key && key.trim()) {
     encryptionKey = key.trim();
+  } else {
+    encryptionKey = null;
   }
 }
 
@@ -22,7 +24,7 @@ export function encryptField(value?: string | null): string | undefined | null {
     return value as string | undefined | null;
   }
   if (!encryptionKey) {
-    return value;
+    throw new Error("Encryption key not initialized");
   }
   if (typeof value === "string" && value.startsWith(ENC_PREFIX)) {
     return value;

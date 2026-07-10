@@ -117,3 +117,74 @@ function createMockResponse(): MockResponse {
   };
   return res;
 }
+
+import AdminDocumentPermissionController from "../controllers/AdminDocumentPermissionController";
+import DocumentPermission from "../models/DocumentPermission";
+import DocumentPermissionAuditLog from "../models/DocumentPermissionAuditLog";
+import UserDocument from "../models/user_documents";
+
+test("Public -> Private transition test revokes hidden permissions", async () => {
+  const originalFindById = UserDocument.findById;
+  const originalFindByIdAndUpdate = UserDocument.findByIdAndUpdate;
+  const originalUpdateMany = DocumentPermission.updateMany;
+  const originalAuditLog = DocumentPermissionAuditLog.create;
+
+  let updateManyCalledWith: any = null;
+  let findByIdAndUpdatePayload: any = null;
+
+  try {
+    (UserDocument as any).findById = async () => ({
+      _id: "doc-123",
+      document_name: "test doc",
+      uploaded_by: "owner-1",
+      privacy: "private",
+      privacy_level: "PRIVATE_SHARED"
+    });
+
+    (UserDocument as any).findByIdAndUpdate = async (id: string, payload: any) => {
+      findByIdAndUpdatePayload = payload;
+      return {
+        _id: id,
+        document_name: "test doc",
+        uploaded_by: "owner-1",
+        privacy_level: payload.privacy_level
+      };
+    };
+
+    (DocumentPermission as any).updateMany = async (query: any, update: any) => {
+      updateManyCalledWith = { query, update };
+      return { modifiedCount: 1 };
+    };
+
+    (DocumentPermissionAuditLog as any).create = async () => {
+      return {};
+    };
+
+    const req = {
+      params: { id: "doc-123" },
+      body: { privacyLevel: "PUBLIC" },
+      id: "admin-1",
+      role: "admin"
+    } as any;
+
+    const res = createMockResponse();
+
+    await AdminDocumentPermissionController.updatePrivacy(req, res as any);
+
+    assert.equal(res.statusCode, 200);
+    assert.ok(findByIdAndUpdatePayload);
+    assert.deepEqual(findByIdAndUpdatePayload.shared_with, []);
+    assert.equal(findByIdAndUpdatePayload.privacy, "public");
+
+    assert.ok(updateManyCalledWith);
+    assert.equal(updateManyCalledWith.query.document_id, "doc-123");
+    assert.equal(updateManyCalledWith.query.revoked_at, null);
+    assert.ok(updateManyCalledWith.update.$set.revoked_at);
+    assert.equal(updateManyCalledWith.update.$set.revoked_by, "admin-1");
+  } finally {
+    UserDocument.findById = originalFindById;
+    UserDocument.findByIdAndUpdate = originalFindByIdAndUpdate;
+    DocumentPermission.updateMany = originalUpdateMany;
+    (DocumentPermissionAuditLog as any).create = originalAuditLog;
+  }
+});

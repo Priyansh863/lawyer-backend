@@ -19,6 +19,7 @@ userRoute.post("/update-profile-image", UserController.updateProfileImage);
 // Route for generating presigned URLs
 userRoute.post(
   "/get-presigned-url",
+  Auth,
   UserController.getPresignedUrl
 );
 
