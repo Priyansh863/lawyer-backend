@@ -603,7 +603,13 @@ export default class DocumentController {
       const s3RoundTrip = await roundTripBase64ViaS3ToStoredBase64(file_base64, fileName, userId);
       const s3Ingest = s3RoundTrip ?? (await ingestS3UploadToStoredBase64(fileUrl, file_base64));
       const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
-      const linkStored = s3Ingest ? undefined : fileUrl;
+
+      if (!storedBase64 && !s3Ingest) {
+        return res.status(400).json({
+          success: false,
+          message: "No valid file content provided. Supply base64 file data or a valid platform S3 URL.",
+        });
+      }
 
       const privacyParsed = DocumentController.parsePrivacyInput(privacy);
       if (privacyParsed.ok === false) {
@@ -616,7 +622,7 @@ export default class DocumentController {
         document_name: fileName,
         status: "Pending",
         uploaded_by: userId,
-        link: linkStored,
+        link: undefined,
         file_base64: storedBase64,
         privacy: normalizedPrivacy,
         privacy_level: DocumentController.toPrivacyLevel(normalizedPrivacy),
@@ -641,7 +647,7 @@ export default class DocumentController {
 
         return res.status(200).json({
           success: true,
-          fileUrl: linkStored ?? fileUrl,
+          fileUrl: null,
           document: doc,
           message: "Document uploaded successfully. AI processing started in background."
         });
@@ -657,7 +663,7 @@ export default class DocumentController {
       }
 
       // For non-PDF files, just return success
-      return res.status(200).json({ success: true, fileUrl: linkStored ?? fileUrl, document: doc });
+      return res.status(200).json({ success: true, fileUrl: null, document: doc });
     } catch (error: any) {
       console.error("Document upload error:", error);
       return res.status(500).json({ success: false, message: error.message || "Failed to upload document" });
@@ -943,7 +949,7 @@ export default class DocumentController {
       // Both lawyers and clients can upload all document types (removed restriction)
 
       // Prepare shared_with array based on privacy setting
-      let sharedWith = [];
+      let sharedWith: string[] = [];
       if (resolvedPrivacy === DocumentPrivacy.PRIVATE) {
         sharedWith = selectedUsers;
       }
@@ -951,14 +957,24 @@ export default class DocumentController {
       const s3RoundTrip = await roundTripBase64ViaS3ToStoredBase64(file_base64, fileName, userId);
       const s3Ingest = s3RoundTrip ?? (await ingestS3UploadToStoredBase64(fileUrl, file_base64));
       const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
-      const linkStored = s3Ingest ? undefined : fileUrl;
+
+      // B2: Reject external/public direct URLs — only platform-controlled S3 objects are permitted.
+      // If no base64 content and S3 ingest did not succeed, we must not store an uncontrolled link.
+      if (!storedBase64 && !s3Ingest) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          success: false,
+          message: "No valid file content provided. Supply base64 file data or a valid platform S3 URL.",
+        });
+      }
 
       // Save to MongoDB within transaction
       const doc = await UserDocument.create([{
         document_name: fileName,
         status: DocumentStatus.PENDING,
         uploaded_by: userId,
-        link: linkStored,
+        link: undefined, // Never store raw external URLs — content must be in storedBase64 or platform S3
         file_base64: storedBase64,
         privacy: resolvedPrivacy,
         privacy_level: DocumentController.toPrivacyLevel(resolvedPrivacy),
@@ -973,6 +989,29 @@ export default class DocumentController {
 
       const savedDoc = doc[0];
 
+      // B3: Create DocumentPermission + audit records atomically for each initial grantee
+      if (sharedWith.length > 0) {
+        const now = new Date();
+        const permDocs = sharedWith.map((granteeId: string) => ({
+          document_id: savedDoc._id,
+          user_id: granteeId,
+          granted_by: userId,
+          granted_at: now,
+          revoked_at: null,
+          revoked_by: null,
+        }));
+        await DocumentPermission.create(permDocs, { session });
+
+        const auditDocs = sharedWith.map((granteeId: string) => ({
+          document_id: savedDoc._id,
+          actor_id: userId,
+          action: "GRANT",
+          target_user_id: granteeId,
+          new_value: { granted_at: now.toISOString(), source: "upload" },
+        }));
+        await DocumentPermissionAuditLog.create(auditDocs, { session });
+      }
+
       // If document is case-related, update the case's documents array
       if (documentType === DocumentType.CASE_RELATED && caseId) {
         await Case.findByIdAndUpdate(
@@ -985,6 +1024,7 @@ export default class DocumentController {
       // Commit transaction if everything is successful
       await session.commitTransaction();
       session.endSession();
+
 
       // Send notification for document upload if public
       try {
@@ -1013,7 +1053,7 @@ export default class DocumentController {
 
       return res.status(200).json({
         success: true,
-        fileUrl: linkStored ?? fileUrl,
+        fileUrl: savedDoc.link ?? null,
         document: savedDoc,
         message: "Document uploaded successfully" + (processWithAI && isPDFFile(fileName) ?
           ". AI processing started in background." : "")
@@ -1063,14 +1103,20 @@ export default class DocumentController {
       const s3RoundTrip = await roundTripBase64ViaS3ToStoredBase64(file_base64, fileName, userId);
       const s3Ingest = s3RoundTrip ?? (await ingestS3UploadToStoredBase64(fileUrl, file_base64));
       const storedBase64 = s3Ingest?.file_base64 ?? (file_base64 ? compressBase64(file_base64) : undefined);
-      const linkStored = s3Ingest ? undefined : fileUrl;
+
+      if (!storedBase64 && !s3Ingest) {
+        return res.status(400).json({
+          success: false,
+          message: "No valid file content provided. Supply base64 file data or a valid platform S3 URL.",
+        });
+      }
 
       // Save to MongoDB
       const doc = await UserDocument.create({
         document_name: fileName,
         status: "Pending",
         uploaded_by: userId,
-        link: linkStored,
+        link: undefined,
         file_base64: storedBase64,
         privacy: DocumentPrivacy.PRIVATE,
         privacy_level: DocumentPrivacyLevel.PRIVATE_SHARED,
@@ -1090,7 +1136,7 @@ export default class DocumentController {
           message: "Document uploaded and processed successfully",
           document: updatedDoc,
           summary: aiResult.summary,
-          fileUrl: linkStored ?? fileUrl
+          fileUrl: null
         });
       } else {
         // AI processing failed, but document is still saved
@@ -1098,7 +1144,7 @@ export default class DocumentController {
           success: false,
           message: `Document uploaded but AI processing failed: ${aiResult.message}`,
           document: doc,
-          fileUrl: linkStored ?? fileUrl
+          fileUrl: null
         });
       }
     } catch (error: any) {
@@ -2045,33 +2091,57 @@ export default class DocumentController {
         updateData.shared_with = [];
       }
 
-      // Update document privacy
-      const updatedDocument = await UserDocument.findByIdAndUpdate(
-        documentId,
-        updateData,
-        { new: true }
-      ).populate('uploaded_by', 'first_name last_name email account_type')
-        .populate('shared_with', 'first_name last_name email account_type');
+      // All writes in a single transaction so permission state and document state never diverge
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      try {
+        // When transitioning to PUBLIC, revoke all active DocumentPermission records
+        // so hidden grants cannot become effective if the document is later set back to Private
+        if (privacy === DocumentPrivacy.PUBLIC) {
+          await DocumentPermission.updateMany(
+            { document_id: documentId, revoked_at: null },
+            { $set: { revoked_at: new Date(), revoked_by: requesterId } },
+            { session }
+          );
+        }
 
-      await DocumentPermissionAuditLog.create({
-        document_id: documentId,
-        actor_id: requesterId,
-        action: "PRIVACY_UPDATE",
-        old_value: {
-          privacy: document.privacy,
-          privacy_level: document.privacy_level || DocumentController.toPrivacyLevel(document.privacy),
-        },
-        new_value: {
-          privacy: updatedDocument?.privacy,
-          privacy_level: (updatedDocument as any)?.privacy_level,
-        },
-      });
+        const updatedDocument = await UserDocument.findByIdAndUpdate(
+          documentId,
+          updateData,
+          { new: true, session }
+        ).populate('uploaded_by', 'first_name last_name email account_type')
+          .populate('shared_with', 'first_name last_name email account_type');
 
-      return res.status(200).json({
-        success: true,
-        message: 'Document privacy updated successfully',
-        document: updatedDocument
-      });
+        await DocumentPermissionAuditLog.create(
+          [{
+            document_id: documentId,
+            actor_id: requesterId,
+            action: "PRIVACY_UPDATE",
+            old_value: {
+              privacy: document.privacy,
+              privacy_level: document.privacy_level || DocumentController.toPrivacyLevel(document.privacy),
+            },
+            new_value: {
+              privacy: updatedDocument?.privacy,
+              privacy_level: (updatedDocument as any)?.privacy_level,
+            },
+          }],
+          { session }
+        );
+
+        await session.commitTransaction();
+        session.endSession();
+
+        return res.status(200).json({
+          success: true,
+          message: 'Document privacy updated successfully',
+          document: updatedDocument
+        });
+      } catch (txErr: any) {
+        await session.abortTransaction();
+        session.endSession();
+        throw txErr;
+      }
     } catch (error: any) {
       console.error('Error updating document privacy:', error);
       return res.status(500).json({
@@ -2125,8 +2195,13 @@ export default class DocumentController {
   }
 
   /**
-   * Get all users for document sharing (lawyers and clients)
-   * Used for the unified document privacy selection
+   * Get users eligible for document sharing.
+   * Scoped to an owner/admin document-management context:
+   *   - documentId must be provided and the requester must own/manage it
+   *   - optional `search` (matches first_name, last_name, email prefix)
+   *   - pagination: limit (max 50) + offset
+   *   - only verified + active accounts
+   *   - minimal fields returned (_id, first_name, last_name, account_type)
    */
   static async getUsersForSharing(req: Request, res: Response) {
     try {
@@ -2134,42 +2209,77 @@ export default class DocumentController {
       if (!userId) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
+      const requesterRole = (req as any).role;
 
-      const currentUser = await User.findById(userId);
-      if (!currentUser) {
-        return res.status(404).json({ success: false, message: "User not found" });
+      // Require documentId to scope the query to a management context
+      const documentId = (req.body?.documentId || req.query?.documentId) as string | undefined;
+      if (!documentId) {
+        return res.status(400).json({ success: false, message: "documentId is required" });
       }
 
-      // Get all users except the current user
-      const users = await User.find(
-        { _id: { $ne: userId } },
-        'first_name last_name email profile_image account_type pratice_area experience'
-      ).sort({ account_type: 1, first_name: 1 }); // Sort by role first, then name
+      const document = await UserDocument.findById(documentId).lean();
+      if (!document) {
+        return res.status(404).json({ success: false, message: "Document not found" });
+      }
 
-      // Separate lawyers and clients for better organization
-      const lawyers = users.filter(user => user.account_type === 'lawyer');
-      const clients = users.filter(user => user.account_type === 'client');
+      // Only the document owner or an admin may enumerate eligible grantees
+      if (!DocumentController.canManageDocumentAccess(userId, requesterRole, document)) {
+        return res.status(403).json({
+          success: false,
+          message: "Only the document owner or an administrator can list shareable users",
+        });
+      }
+
+      // Search filter (optional) — prefix match on first_name, last_name, or email
+      const search = (req.body?.search ?? req.query?.search ?? "") as string;
+      const rawLimit = parseInt(String(req.body?.limit ?? req.query?.limit ?? "20"), 10);
+      const limit = Math.min(Math.max(rawLimit, 1), 50);
+      const offset = Math.max(parseInt(String(req.body?.offset ?? req.query?.offset ?? "0"), 10), 0);
+
+      const filterQuery: Record<string, any> = {
+        _id: { $ne: userId },
+        is_verified: true,
+        is_active: { $ne: 0 },
+      };
+      if (search.trim()) {
+        const re = new RegExp("^" + search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+        filterQuery.$or = [
+          { first_name: re },
+          { last_name: re },
+          { email: re },
+        ];
+      }
+
+      const [users, total] = await Promise.all([
+        User.find(filterQuery, "_id first_name last_name account_type")
+          .sort({ account_type: 1, first_name: 1 })
+          .skip(offset)
+          .limit(limit)
+          .lean(),
+        User.countDocuments(filterQuery),
+      ]);
 
       return res.status(200).json({
         success: true,
-        users: {
-          lawyers,
-          clients,
-          all: users
-        }
+        data: {
+          users,
+          total,
+          limit,
+          offset,
+        },
       });
     } catch (error: any) {
-      console.error('Error getting users for sharing:', error);
+      console.error("Error getting users for sharing:", error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Failed to get users'
+        message: error.message || "Failed to get users",
       });
     }
   }
 
   /**
    * Get document sharing details
-   * Shows who a document is shared with
+   * Owner/admin only — granted users must not see the full shared_with list or other grantees' PII.
    */
   static async getDocumentSharingDetails(req: Request, res: Response) {
     try {
@@ -2191,10 +2301,11 @@ export default class DocumentController {
         });
       }
 
-      if (!(await DocumentController.canAccessDocumentAsync(userId, requesterRole, document))) {
+      // Sharing details are owner/admin only — a grantee cannot enumerate other grantees
+      if (!DocumentController.canManageDocumentAccess(userId, requesterRole, document)) {
         return res.status(403).json({
           success: false,
-          message: 'You do not have access to this document'
+          message: 'Only the document owner or an administrator can view sharing details'
         });
       }
 
@@ -2924,6 +3035,12 @@ export default class DocumentController {
       // Fallback: return the link if no base64 stored
       if (document.link) {
         const presignedUrl = await getShortLivedPresignedGetUrl(document.link);
+        if (!presignedUrl) {
+          return res.status(404).json({
+            success: false,
+            message: 'No downloadable content found or link is invalid'
+          });
+        }
         return res.status(200).json({
           success: true,
           document_name: document.document_name,

@@ -4,7 +4,8 @@
   "description": "",
   "main": "./src/App.ts",
   "scripts": {
-    "test": "node --require ts-node/register --test src/tests/admin-document-permission.test.ts",
+    "test": "node --require ts-node/register --test src/tests/admin-document-permission.test.ts src/tests/document-storage-auth.test.ts src/tests/encryption.test.ts src/tests/runtime-validation.test.ts",
+    "test:all": "node --require ts-node/register --test src/tests/admin-document-permission.test.ts src/tests/document-storage-auth.test.ts src/tests/encryption.test.ts src/tests/runtime-validation.test.ts",
     "test:documents": "node --require ts-node/register --test src/tests/document-storage-auth.test.ts",
     "start": "set NODE_ENV=development&& nodemon src/App.ts&& node --max-old-space-size=5120",
     "start:dev": "export NODE_ENV=development&& nodemon ./index.ts",

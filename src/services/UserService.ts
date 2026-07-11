@@ -66,14 +66,25 @@ class UserService {
    */
   async getPresignedUrl(requestData) {
     try {
-      const { filePath, fileFormat } = requestData;
-      const data = await Helper.gettingPreSignedUrl(filePath, fileFormat);
+      const { filePath, fileFormat, userId, fileName } = requestData;
+
+      if (!userId) {
+        throw new Error("unauthorized");
+      }
+
+      // Derive the S3 key server-side to ensure caller cannot request keys outside their namespace.
+      // Prefer explicit `fileName` if provided, otherwise extract from filePath or fall back to a generic name.
+      const originalName = (fileName && String(fileName)) || (filePath && String(filePath).split('/').pop()) || `file.${fileFormat || 'bin'}`;
+      const sanitized = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const s3Key = `uploads/${userId}/${Date.now()}_${sanitized}`;
+
+      const data = await Helper.gettingPreSignedUrl(s3Key, fileFormat);
       return {
         message: "presigned_url_generated",
         success: true,
         data,
       };
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(error.message);
     }
   }

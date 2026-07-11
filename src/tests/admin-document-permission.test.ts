@@ -6,7 +6,9 @@ import {
   requireAdmin,
   resolveAdminAccess,
 } from "../middleware/auth";
+import mongoose from "mongoose";
 import { User } from "../models/user";
+import DocumentController from "../controllers/DocumentController";
 
 test("resolveAdminAccess returns unauthorized when userId is missing", async () => {
   const result = await resolveAdminAccess(undefined, "lawyer");
@@ -186,5 +188,124 @@ test("Public -> Private transition test revokes hidden permissions", async () =>
     UserDocument.findByIdAndUpdate = originalFindByIdAndUpdate;
     DocumentPermission.updateMany = originalUpdateMany;
     (DocumentPermissionAuditLog as any).create = originalAuditLog;
+  }
+});
+
+test("Owner privacy transition lifecycle: Private+grant -> Public -> Private revokes previous user access", async () => {
+  const originalFindById = UserDocument.findById;
+  const originalFindByIdAndUpdate = UserDocument.findByIdAndUpdate;
+  const originalUpdateMany = DocumentPermission.updateMany;
+  const originalExists = DocumentPermission.exists;
+  const originalAuditLog = DocumentPermissionAuditLog.create;
+  const originalStartSession = mongoose.startSession;
+
+  let sharedWithArray = ["507f1f77bcf86cd799439012"];
+  let privacyState = "private";
+  let activePermissionMock = true; // initially active
+
+  (UserDocument as any).findById = async () => ({
+    _id: "507f1f77bcf86cd799439013",
+    document_name: "test doc",
+    uploaded_by: "owner-user-id",
+    privacy: privacyState,
+    privacy_level: privacyState === "private" ? "PRIVATE_SHARED" : "PUBLIC",
+    shared_with: sharedWithArray,
+  });
+
+  (UserDocument as any).findByIdAndUpdate = (id: string, payload: any) => {
+    if (payload.shared_with) {
+      sharedWithArray = payload.shared_with;
+    }
+    if (payload.privacy) {
+      privacyState = payload.privacy;
+    }
+    const populated = {
+      _id: id,
+      document_name: "test doc",
+      uploaded_by: "owner-user-id",
+      privacy: privacyState,
+      privacy_level: privacyState === "private" ? "PRIVATE_SHARED" : "PUBLIC",
+      shared_with: sharedWithArray,
+    };
+    const chain = {
+      populate() { return chain; },
+      then(onfulfilled: any) {
+        return Promise.resolve(populated).then(onfulfilled);
+      }
+    };
+    return chain as any;
+  };
+
+  (DocumentPermission as any).updateMany = async (query: any, update: any) => {
+if (query.document_id === "507f1f77bcf86cd799439013" && query.revoked_at === null) {
+      activePermissionMock = false; // revoke the active permission
+    }
+    return { modifiedCount: 1 };
+  };
+  
+  (DocumentPermission as any).exists = async (query: any) => {
+    if (query.user_id?.toString() === "507f1f77bcf86cd799439012" && query.document_id === "507f1f77bcf86cd799439013") {
+      if (query.revoked_at === null) {
+        return activePermissionMock;
+      }
+    }
+    return false;
+  };
+
+  (DocumentPermissionAuditLog as any).create = async () => ({});
+
+  (mongoose as any).startSession = async () => ({
+    startTransaction() {},
+    commitTransaction: async () => {},
+    abortTransaction: async () => {},
+    endSession() {}
+  });
+
+  try {
+    // 1. Initial State: Private + active grant. Verify user has access.
+    const docObj = await UserDocument.findById("507f1f77bcf86cd799439013");
+    const initialAccess = await (DocumentController as any).canAccessDocumentAsync("507f1f77bcf86cd799439012", "client", docObj);
+    assert.equal(initialAccess, true);
+
+    // 2. Owner changes privacy to PUBLIC
+    const reqToPublic = {
+      params: { documentId: "507f1f77bcf86cd799439013" },
+      body: { privacy: "public" },
+      id: "owner-user-id",
+      role: "client"
+    } as any;
+    const resToPublic = createMockResponse();
+
+    await DocumentController.updateDocumentPrivacy(reqToPublic, resToPublic as any);
+    assert.equal(resToPublic.statusCode, 200);
+    assert.equal(privacyState, "public");
+    assert.deepEqual(sharedWithArray, []);
+    assert.equal(activePermissionMock, false); // permissions revoked!
+
+    // 3. Owner changes privacy back to PRIVATE
+    const reqToPrivate = {
+      params: { documentId: "507f1f77bcf86cd799439013" },
+      body: { privacy: "private" },
+      id: "owner-user-id",
+      role: "client"
+    } as any;
+    const resToPrivate = createMockResponse();
+
+    await DocumentController.updateDocumentPrivacy(reqToPrivate, resToPrivate as any);
+    assert.equal(resToPrivate.statusCode, 200);
+    assert.equal(privacyState, "private");
+    assert.deepEqual(sharedWithArray, []); // empty
+
+    // 4. Verify previous user does NOT regain access
+    const updatedDocObj = await UserDocument.findById("507f1f77bcf86cd799439013");
+    const finalAccess = await (DocumentController as any).canAccessDocumentAsync("507f1f77bcf86cd799439012", "client", updatedDocObj);
+    assert.equal(finalAccess, false); // Blocked/revoked!
+  } finally {
+    UserDocument.findById = originalFindById;
+    UserDocument.findByIdAndUpdate = originalFindByIdAndUpdate;
+    DocumentPermission.updateMany = originalUpdateMany;
+    DocumentPermission.exists = originalExists;
+    (DocumentPermissionAuditLog as any).create = originalAuditLog;
+    mongoose.startSession = originalStartSession;
   }
 });

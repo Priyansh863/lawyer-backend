@@ -208,12 +208,15 @@ export const deleteFileFromS3 = async (filePathArray: string[]) => {
 
 /**
  * Generate a short-lived (60s) presigned GET URL for a private S3 URL.
- * Returns the original URL if it's not a valid S3 URL or if generation fails.
+ * Returns null — NOT the original URL — on any parse or presign failure.
+ * Callers MUST return 403/404 when null is received; they must never fall back
+ * to serving the original URL.
  */
-export async function getShortLivedPresignedGetUrl(fileUrl: string): Promise<string> {
+export async function getShortLivedPresignedGetUrl(fileUrl: string): Promise<string | null> {
   const parsed = parseS3ObjectUrl(fileUrl);
-  if (!parsed) {
-    return fileUrl;
+  if (!parsed || parsed.bucket !== CONFIG.bucket) {
+    // URL is not a recognised platform S3 URL or not in the configured bucket — refuse to serve it
+    return null;
   }
   try {
     const command = new GetObjectCommand({
@@ -225,6 +228,7 @@ export async function getShortLivedPresignedGetUrl(fileUrl: string): Promise<str
     });
   } catch (error) {
     console.error("Error generating presigned GET URL:", error);
-    return fileUrl;
+    // Fail closed — never return the original URL on error
+    return null;
   }
 }

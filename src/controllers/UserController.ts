@@ -140,10 +140,14 @@ class UserController {
 
   static async getPresignedUrl(req: Request, res: Response) {
     try {
-      const requestData = req.body;
+      const userId = (req as any).id || (req as any).user?.userId;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      const requestData = { ...req.body, userId };
       const response = await UserService.getPresignedUrl(requestData);
       res.status(200).json(response);
-    } catch (error) {
+    } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
     }
   }

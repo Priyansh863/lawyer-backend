@@ -162,3 +162,222 @@ test("Runtime Validation: Document permission flows (Grant, Revoke, Block)", asy
     (DocumentPermissionAuditLog as any).create = originalAuditLog;
   }
 });
+
+import * as FileUpload from "../utils/fileUpload";
+import UserController from "../controllers/UserController";
+import UserService from "../services/UserService";
+import Helper from "../utils/helper";
+
+test("Runtime Validation: Presigned URL Fail-Closed and Namespace Restriction", async () => {
+  // 1. getShortLivedPresignedGetUrl returns null (fail-closed) on unrecognized/invalid URL
+  const nullUrl = await FileUpload.getShortLivedPresignedGetUrl("http://unauthorized-external-link.com/file.pdf");
+  assert.equal(nullUrl, null);
+
+  // 2. Presigned upload endpoint enforces user ID namespace on filePath
+  const originalGettingPreSignedUrl = Helper.gettingPreSignedUrl;
+  let receivedS3Key: string | null = null;
+  (Helper as any).gettingPreSignedUrl = async (key: string, format: any) => {
+    receivedS3Key = key;
+    return "https://mock-s3-url.com/" + key;
+  };
+
+  try {
+    // Valid namespace input still results in a server-side key inside the user namespace
+    const req1 = {
+      body: { filePath: "temp/507f1f77bcf86cd799439013/my_doc.pdf", fileFormat: "application/pdf" },
+      id: "507f1f77bcf86cd799439013",
+      role: "client"
+    } as any;
+    const res1 = createMockResponse();
+    await UserController.getPresignedUrl(req1, res1);
+    assert.equal(res1.statusCode, 200);
+    assert.ok(receivedS3Key);
+    assert.ok(receivedS3Key.startsWith("uploads/507f1f77bcf86cd799439013/"));
+
+    // Invalid namespace path -> gets rewritten to a safe key inside the user's namespace prefix
+    const req2 = {
+      body: { filePath: "some_arbitrary/path/leak.pdf", fileFormat: "application/pdf" },
+      id: "507f1f77bcf86cd799439013",
+      role: "client"
+    } as any;
+    const res2 = createMockResponse();
+    await UserController.getPresignedUrl(req2, res2);
+    assert.equal(res2.statusCode, 200);
+    assert.ok(receivedS3Key);
+    assert.ok(receivedS3Key.startsWith("uploads/507f1f77bcf86cd799439013/"));
+  } finally {
+    Helper.gettingPreSignedUrl = originalGettingPreSignedUrl;
+  }
+});
+
+test("Runtime Validation: Document upload rejects external direct URLs", async () => {
+  const req = {
+    body: {
+      fileUrl: "https://example.com/external.pdf",
+      fileName: "external.pdf",
+      privacy: "private"
+    },
+    id: "507f1f77bcf86cd799439013",
+    role: "client"
+  } as any;
+  const res = createMockResponse();
+  await DocumentController.uploadDocument(req, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body?.message, "No valid file content provided. Supply base64 file data or a valid platform S3 URL.");
+});
+
+test("Runtime Validation: uploadDocumentWithAI creates initial permission and audit records", async () => {
+  const originalStartSession = mongoose.startSession;
+  const originalUserDocumentCreate = UserDocument.create;
+  const originalPermCreate = DocumentPermission.create;
+  const originalAuditCreate = DocumentPermissionAuditLog.create;
+  const originalUserFindById = (User as any).findById;
+  const originalRoundTrip = FileUpload.roundTripBase64ViaS3ToStoredBase64;
+  const originalIngest = FileUpload.ingestS3UploadToStoredBase64;
+
+  let permissionDocs: any = null;
+  let auditDocs: any = null;
+
+  (mongoose as any).startSession = async () => ({
+    startTransaction() {},
+    commitTransaction: async () => {},
+    abortTransaction: async () => {},
+    endSession() {}
+  });
+
+  (User as any).findById = async () => ({ _id: "507f1f77bcf86cd799439013" } as any);
+  (UserDocument as any).create = async (docs: any[]) => [{ _id: "uploaded-doc-1", ...docs[0] }];
+  (DocumentPermission as any).create = async (docs: any[], opts: any) => { permissionDocs = docs; return docs; };
+  (DocumentPermissionAuditLog as any).create = async (docs: any[], opts: any) => { auditDocs = docs; return docs; };
+  (FileUpload as any).roundTripBase64ViaS3ToStoredBase64 = async () => ({ file_base64: "data:text/plain;base64,aGVsbG8=", link: null });
+  (FileUpload as any).ingestS3UploadToStoredBase64 = async () => null;
+
+  try {
+    const req = {
+      body: {
+        file_base64: "data:text/plain;base64,aGVsbG8=",
+        fileName: "test.txt",
+        selectedUsers: ["507f1f77bcf86cd799439014"],
+        privacy: "private",
+        processWithAI: false
+      },
+      id: "507f1f77bcf86cd799439013",
+      role: "client"
+    } as any;
+    const res = createMockResponse();
+    await DocumentController.uploadDocumentWithAI(req, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.ok(permissionDocs?.length === 1);
+    assert.equal(permissionDocs[0].document_id, "uploaded-doc-1");
+    assert.ok(auditDocs?.length === 1);
+    assert.equal(auditDocs[0].action, "GRANT");
+  } finally {
+    mongoose.startSession = originalStartSession;
+    UserDocument.create = originalUserDocumentCreate;
+    DocumentPermission.create = originalPermCreate;
+    DocumentPermissionAuditLog.create = originalAuditCreate;
+    User.findById = originalUserFindById;
+    (FileUpload as any).roundTripBase64ViaS3ToStoredBase64 = originalRoundTrip;
+    (FileUpload as any).ingestS3UploadToStoredBase64 = originalIngest;
+  }
+});
+
+test("Runtime Validation: Sharing Details and Users List Scoping", async () => {
+  const originalFindById = UserDocument.findById;
+  const originalUserFind = User.find;
+  const originalUserCount = User.countDocuments;
+
+  const mockDoc = {
+    _id: new mongoose.Types.ObjectId("507f1f77bcf86cd799439014"),
+    document_name: "secure_doc.pdf",
+    uploaded_by: new mongoose.Types.ObjectId("507f1f77bcf86cd799439011"), // owned by 507f1f77bcf86cd799439011
+    shared_with: [],
+    privacy: "private",
+    privacy_level: "PRIVATE_SHARED"
+  };
+
+  (UserDocument as any).findById = () => {
+    const chain = {
+      populate() { return chain; },
+      lean() { return Promise.resolve(mockDoc); },
+      then(onfulfilled: any) {
+        return Promise.resolve(mockDoc).then(onfulfilled);
+      }
+    };
+    return chain as any;
+  };
+
+  (User as any).find = () => {
+    const chain = {
+      sort() { return chain; },
+      skip() { return chain; },
+      limit() { return chain; },
+      lean() {
+        return Promise.resolve([
+          { _id: "507f1f77bcf86cd799439012", first_name: "Alice", last_name: "Smith", account_type: "client" }
+        ]);
+      }
+    };
+    return chain as any;
+  };
+  (User as any).countDocuments = async () => 1;
+
+  try {
+    // 1. Requester is NOT owner/admin -> getDocumentSharingDetails returns 403 Forbidden
+    const reqNonOwner = {
+      params: { documentId: "507f1f77bcf86cd799439014" },
+      id: "507f1f77bcf86cd799439012", // user-2
+      role: "client"
+    } as any;
+    const resNonOwner = createMockResponse();
+    await DocumentController.getDocumentSharingDetails(reqNonOwner, resNonOwner);
+    assert.equal(resNonOwner.statusCode, 403);
+
+    // 2. Requester IS owner -> getDocumentSharingDetails returns 200 OK
+    const reqOwner = {
+      params: { documentId: "507f1f77bcf86cd799439014" },
+      id: "507f1f77bcf86cd799439011", // owner
+      role: "client"
+    } as any;
+    const resOwner = createMockResponse();
+    await DocumentController.getDocumentSharingDetails(reqOwner, resOwner);
+    assert.equal(resOwner.statusCode, 200);
+
+    // 3. getUsersForSharing without documentId fails with 400
+    const reqNoDocId = {
+      body: {},
+      id: "507f1f77bcf86cd799439011",
+      role: "client"
+    } as any;
+    const resNoDocId = createMockResponse();
+    await DocumentController.getUsersForSharing(reqNoDocId, resNoDocId);
+    assert.equal(resNoDocId.statusCode, 400);
+
+    // 4. getUsersForSharing for non-owned document fails with 403
+    const reqGetUsersNonOwner = {
+      body: { documentId: "507f1f77bcf86cd799439014" },
+      id: "507f1f77bcf86cd799439012",
+      role: "client"
+    } as any;
+    const resGetUsersNonOwner = createMockResponse();
+    await DocumentController.getUsersForSharing(reqGetUsersNonOwner, resGetUsersNonOwner);
+    assert.equal(resGetUsersNonOwner.statusCode, 403);
+
+    // 5. getUsersForSharing for owned document succeeds with 200
+    const reqGetUsersOwner = {
+      body: { documentId: "507f1f77bcf86cd799439014" },
+      id: "507f1f77bcf86cd799439011",
+      role: "client"
+    } as any;
+    const resGetUsersOwner = createMockResponse();
+    await DocumentController.getUsersForSharing(reqGetUsersOwner, resGetUsersOwner);
+    assert.equal(resGetUsersOwner.statusCode, 200);
+    assert.equal(resGetUsersOwner.body.success, true);
+    assert.equal(resGetUsersOwner.body.data.users.length, 1);
+  } finally {
+    UserDocument.findById = originalFindById;
+    User.find = originalUserFind;
+    User.countDocuments = originalUserCount;
+  }
+});
